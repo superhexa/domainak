@@ -5,6 +5,7 @@ import {
   LanguageRounded,
   ModeEditOutlineRounded,
   QueryStatsRounded,
+  TuneRounded,
 } from "@mui/icons-material";
 import {
   Alert,
@@ -44,10 +45,16 @@ import {
 import { useNavigate } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DomainRulesPanel } from "../components/DomainRulesPanel";
 import { LoadingScreen } from "../components/LoadingScreen";
 import { ApiError, api } from "../lib/api";
 import { subdomainFromHost, takePendingClaimHost } from "../lib/claim";
-import type { Domain, Stats, User } from "../lib/types";
+import type {
+  Domain,
+  DomainRulesPayload,
+  Stats,
+  User,
+} from "../lib/types";
 import { formatNumber, getErrorMessage } from "../lib/utils";
 import { FONT_DISPLAY, FONT_MONO } from "../theme/theme";
 import Suspended from "./Suspended";
@@ -100,6 +107,7 @@ export default function Dashboard() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [rulesSavingId, setRulesSavingId] = useState<number | null>(null);
 
   const setTransientFeedback = useCallback(
     (message: string, severity: Feedback["severity"] = "success") => {
@@ -336,8 +344,12 @@ export default function Dashboard() {
       try {
         const res = await api.put<{ domain: Domain }>(`/domains/${id}`, payload);
         const updated = res.data.domain;
+        // Merged instead of replaced: the target endpoint echoes the row
+        // without the derived `serviceWindow`, which the summary chip needs.
         setDomains((current) =>
-          current.map((item) => (item.id === id ? updated : item)),
+          current.map((item) =>
+            item.id === id ? { ...item, ...updated } : item,
+          ),
         );
         setTransientFeedback("Route updated successfully.");
         return true;
@@ -349,6 +361,42 @@ export default function Dashboard() {
         return false;
       } finally {
         setUpdatingId(null);
+      }
+    },
+    [setTransientFeedback],
+  );
+
+  // Persists the access-rule draft: country policy, maintenance mode and the
+  // daily service window. The server validates, converts the window to GMT
+  // and republishes the rules the edge proxy enforces.
+  const handleSaveRules = useCallback(
+    async (id: number, payload: DomainRulesPayload): Promise<boolean> => {
+      setFeedback(null);
+      setRulesSavingId(id);
+      try {
+        const res = await api.put<{ domain: Domain }>(
+          `/domains/${id}/settings`,
+          payload,
+        );
+        const updated = res.data.domain;
+        setDomains((current) =>
+          current.map((item) =>
+            item.id === id ? { ...item, ...updated } : item,
+          ),
+        );
+        setTransientFeedback("Access rules updated.");
+        return true;
+      } catch (error: unknown) {
+        setFeedback({
+          message: getErrorMessage(
+            error,
+            "We could not save those rules.",
+          ),
+          severity: "error",
+        });
+        return false;
+      } finally {
+        setRulesSavingId(null);
       }
     },
     [setTransientFeedback],
@@ -624,8 +672,10 @@ export default function Dashboard() {
               domain={domain}
               onDelete={handleDelete}
               onUpdate={handleUpdate}
+              onSaveRules={handleSaveRules}
               isUpdating={updatingId === domain.id}
               isDeleting={deletingId === domain.id}
+              isSavingRules={rulesSavingId === domain.id}
             />
           ))}
         </Box>
@@ -654,8 +704,10 @@ const DomainRow = memo(function DomainRow({
   domain,
   onDelete,
   onUpdate,
+  onSaveRules,
   isUpdating,
   isDeleting,
+  isSavingRules,
 }: {
   domain: Domain;
   onDelete: (id: number) => void;
@@ -663,8 +715,13 @@ const DomainRow = memo(function DomainRow({
     id: number,
     payload: DomainUpdatePayload,
   ) => Promise<boolean>;
+  onSaveRules: (
+    id: number,
+    payload: DomainRulesPayload,
+  ) => Promise<boolean>;
   isUpdating: boolean;
   isDeleting: boolean;
+  isSavingRules: boolean;
 }) {
   const theme = useTheme();
   const [stats, setStats] = useState<Stats | null>(null);
@@ -673,6 +730,7 @@ const DomainRow = memo(function DomainRow({
   const [statsError, setStatsError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [showRules, setShowRules] = useState(false);
   const [editData, setEditData] = useState<TargetFormValue>({
     mode: domain.mode ?? "proxy",
     hostname: domain.hostname ?? "",
@@ -854,6 +912,7 @@ const DomainRow = memo(function DomainRow({
                 ? `→ ${domain.targetUrl || "no redirect URL set"}`
                 : `→ ${domain.hostname || "no host set"}:${domain.port ?? "?"}`}
             </Typography>
+            <RuleSummary domain={domain} />
           </Box>
         </Box>
 
@@ -882,6 +941,15 @@ const DomainRow = memo(function DomainRow({
             disabled={isDeleting}
           >
             {showStats ? "Hide analytics" : "Analytics"}
+          </Button>
+          <Button
+            size="small"
+            variant={showRules ? "contained" : "outlined"}
+            startIcon={<TuneRounded />}
+            onClick={() => setShowRules((current) => !current)}
+            disabled={isDeleting}
+          >
+            {showRules ? "Hide rules" : "Rules"}
           </Button>
           <Button
             size="small"
@@ -960,6 +1028,15 @@ const DomainRow = memo(function DomainRow({
             </Box>
           </CardContent>
         </>
+      ) : null}
+
+      {showRules ? (
+        <DomainRulesPanel
+          key={`${domain.id}-rules`}
+          domain={domain}
+          isSaving={isSavingRules}
+          onSave={onSaveRules}
+        />
       ) : null}
 
       {showStats ? (
@@ -1127,6 +1204,67 @@ const DomainRow = memo(function DomainRow({
     </Card>
   );
 });
+
+// Always-visible summary of a route's access rules, so restrictions are
+// readable from the list without opening the editor. The service-hours chip
+// shows the GMT range the server published next to the owner's local one.
+function RuleSummary({ domain }: { domain: Domain }) {
+  const geoMode = domain.geoMode ?? "all";
+  const countryCount = domain.geoCountries?.length ?? 0;
+  const window = domain.serviceWindow ?? null;
+
+  let geoLabel: string | null = null;
+  if (countryCount > 0 && geoMode !== "all") {
+    const noun = countryCount === 1 ? "country" : "countries";
+    geoLabel =
+      geoMode === "allowlist"
+        ? `Only ${countryCount} ${noun}`
+        : `Excluding ${countryCount} ${noun}`;
+  }
+
+  if (!domain.maintenance && geoLabel === null && window === null) {
+    return (
+      <Typography
+        variant="caption"
+        color="textSecondary"
+        sx={{ display: "block", mt: 0.75 }}
+      >
+        No access rules — every country, around the clock.
+      </Typography>
+    );
+  }
+
+  return (
+    <Stack
+      direction="row"
+      spacing={0.75}
+      useFlexGap
+      sx={{ mt: 1, flexWrap: "wrap" }}
+    >
+      {domain.maintenance ? (
+        <Chip
+          size="small"
+          color="warning"
+          variant="outlined"
+          label="Maintenance — not in service"
+        />
+      ) : null}
+      {geoLabel ? (
+        <Chip size="small" variant="outlined" label={geoLabel} />
+      ) : null}
+      {window ? (
+        <Chip
+          size="small"
+          variant="outlined"
+          label={
+            `Service hours ${window.start}–${window.end}` +
+            ` (${window.offsetLabel}) · GMT ${window.utcStart}–${window.utcEnd}`
+          }
+        />
+      ) : null}
+    </Stack>
+  );
+}
 
 // Shared route-type selector plus the destination fields for both modes:
 // "Proxied" asks for a host and port, "Redirect" only for a target URL.

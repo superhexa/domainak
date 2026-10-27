@@ -6,6 +6,7 @@ import { adminRouter } from "./routes/admin";
 import { authRouter } from "./routes/auth";
 import { domainsRouter } from "./routes/domains";
 import { statsRouter } from "./routes/stats";
+import { startSettingsRefresher } from "./settings";
 
 const app = new Hono();
 const apiRouter = new Hono();
@@ -48,3 +49,7 @@ export default {
 console.log(
   `Server running on http://localhost:${process.env.PORT || 2007}`,
 );
+
+// Keeps the UTC offsets embedded in published service-window payloads in
+// sync with daylight saving transitions.
+startSettingsRefresher();

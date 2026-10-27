@@ -8,6 +8,12 @@ import {
   domainTable,
 } from "../db/schema";
 import { jwtMiddleware } from "../middleware/auth";
+import {
+  type DomainRuleSettings,
+  parseSettingsInput,
+  publishDomainSettings,
+  serviceWindowMeta,
+} from "../settings";
 
 export const domainsRouter = new Hono<{ Variables: { user: any } }>();
 domainsRouter.use("*", jwtMiddleware);
@@ -147,7 +153,15 @@ domainsRouter.get("/", async (c) => {
     .select()
     .from(domainTable)
     .where(eq(domainTable.userId, user.id));
-  return c.json({ domains });
+
+  // The dashboard shows the local service window next to its GMT conversion,
+  // so the offset is computed here instead of letting the client guess it.
+  return c.json({
+    domains: domains.map((row) => ({
+      ...row,
+      serviceWindow: serviceWindowMeta(row),
+    })),
+  });
 });
 
 // Add a new subdomain
@@ -320,6 +334,69 @@ domainsRouter.put("/:id", async (c) => {
   } catch (error: any) {
     console.error(error);
     return c.json({ error: "Failed to update subdomain" }, 500);
+  }
+});
+
+// Update an existing route's access rules: country policy, maintenance mode
+// and service window. Rules are validated, published to redis for the edge
+// proxy, then stored as the source of truth on the row.
+domainsRouter.put("/:id/settings", async (c) => {
+  const user = c.get("user");
+  const id = Number.parseInt(c.req.param("id"), 10);
+
+  if (Number.isNaN(id)) {
+    return c.json({ error: "Invalid domain id" }, 400);
+  }
+
+  const domain = await db
+    .select()
+    .from(domainTable)
+    .where(eq(domainTable.id, id));
+
+  if (domain.length === 0 || !domain[0]) {
+    return c.json({ error: "Domain not found" }, 404);
+  }
+
+  const existing = domain[0];
+  if (existing.userId !== user.id && !user.isAdmin) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  const parsed = parseSettingsInput(await c.req.json());
+  if ("error" in parsed) {
+    return c.json({ error: parsed.error }, 400);
+  }
+
+  const settings: DomainRuleSettings = parsed.settings;
+
+  try {
+    await publishDomainSettings(existing.subdomain, settings);
+    const updated = await db
+      .update(domainTable)
+      .set({
+        geoMode: settings.geoMode,
+        geoCountries: settings.geoCountries,
+        maintenance: settings.maintenance,
+        maintenanceMessage: settings.maintenanceMessage,
+        serviceHours: settings.serviceHours,
+        timezone: settings.timezone,
+        serviceStart: settings.serviceStart,
+        serviceEnd: settings.serviceEnd,
+      })
+      .where(eq(domainTable.id, id))
+      .returning();
+
+    const route = updated[0];
+    if (!route) {
+      return c.json({ error: "Failed to update subdomain rules" }, 500);
+    }
+
+    return c.json({
+      domain: { ...route, serviceWindow: serviceWindowMeta(route) },
+    });
+  } catch (error) {
+    console.error(error);
+    return c.json({ error: "Failed to update subdomain rules" }, 500);
   }
 });
 

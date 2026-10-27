@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   date,
@@ -5,6 +6,7 @@ import {
   integer,
   pgTable,
   serial,
+  text,
   timestamp,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -33,6 +35,28 @@ export const domainTable = pgTable(
     port: integer("port"),
     targetUrl: varchar("target_url", { length: 500 }),
     mode: varchar("mode", { length: 8 }).default("proxy").notNull(),
+    // Per-subdomain access rules, enforced by the edge proxy (see
+    // unregistered.lua). geo_mode: "all" (default), "allowlist" (only the
+    // selected countries), "blocklist" (every country except the selected).
+    geoMode: varchar("geo_mode", { length: 12 }).default("all").notNull(),
+    geoCountries: text("geo_countries")
+      .array()
+      .$type<string[]>()
+      .default(sql`'{}'`)
+      .notNull(),
+    maintenance: boolean("maintenance").default(false).notNull(),
+    maintenanceMessage: varchar("maintenance_message", { length: 200 }),
+    // Service window: the subdomain only serves traffic between service_start
+    // and service_end in `timezone` (IANA name). "24:00" is a valid end value
+    // and an equal start/end means around the clock.
+    serviceHours: boolean("service_hours").default(false).notNull(),
+    timezone: varchar("timezone", { length: 64 }).default("UTC").notNull(),
+    serviceStart: varchar("service_start", { length: 5 })
+      .default("00:00")
+      .notNull(),
+    serviceEnd: varchar("service_end", { length: 5 })
+      .default("24:00")
+      .notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
