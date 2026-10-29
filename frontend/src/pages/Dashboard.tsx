@@ -28,6 +28,8 @@ import {
   Select,
   Snackbar,
   Stack,
+  Tabs,
+  Tab,
   TextField,
   Typography,
   useTheme,
@@ -93,6 +95,7 @@ export default function Dashboard() {
   const [availableDomains, setAvailableDomains] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSuspended, setIsSuspended] = useState(false);
+  const [activeTab, setActiveTab] = useState<"records" | "domains">("records");
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [formData, setFormData] = useState({
@@ -433,41 +436,49 @@ export default function Dashboard() {
           display: "flex",
           flexDirection: { xs: "column", md: "row" },
           justifyContent: "space-between",
-          alignItems: { xs: "flex-start", md: "flex-end" },
+          alignItems: { xs: "flex-start", md: "center" },
           gap: 2,
-          mb: 4,
+          mb: 2,
         }}
       >
-        <Box sx={{ minWidth: 0 }}>
+        <Box sx={{ minWidth: 0, flexShrink: 1 }}>
           <Chip
             label="Workspace"
             size="small"
             variant="outlined"
             color="primary"
-            sx={{ mb: 1.5 }}
+            sx={{ mb: 1 }}
           />
-          <Typography variant="h1" component="h1">
-            Domains
+          <Typography variant="h1" component="h1" sx={{ mb: 0.5 }}>
+            {activeTab === "records" ? "DNS Records" : "Domains"}
           </Typography>
           <Typography
             variant="body1"
             color="textSecondary"
-            sx={{ mt: 1, maxWidth: 640 }}
+            sx={{ mt: 0.5, maxWidth: 640 }}
           >
-            Register a destination, review traffic only when you need it,
-            and keep the day-to-day workspace focused on routing decisions.
+            {activeTab === "records"
+              ? "Create A, AAAA, CNAME and TXT records inside *.rc.yourdomain — served by your own nameservers with no quota, resolved through the tunnel with HTTPS."
+              : "Register a destination, review traffic only when you need it, and keep the day-to-day workspace focused on routing decisions."}
           </Typography>
         </Box>
 
-        <Button
-          variant="contained"
-          size="large"
-          startIcon={showAddForm ? <CloseRounded /> : <AddRounded />}
-          onClick={() => setShowAddForm((current) => !current)}
-          sx={{ width: { xs: "100%", md: "auto" } }}
+        <Tabs
+          value={activeTab === "records" ? 0 : 1}
+          onChange={(_, value) => setActiveTab(value === 0 ? "records" : "domains")}
+          sx={{ flexShrink: 0 }}
         >
-          {showAddForm ? "Hide form" : "New domain"}
-        </Button>
+          <Tab
+            icon={<DnsRounded />}
+            label="Records"
+            sx={{ minWidth: 110, textTransform: "none", fontWeight: 600 }}
+          />
+          <Tab
+            icon={<LanguageRounded />}
+            label="Domains"
+            sx={{ minWidth: 110, textTransform: "none", fontWeight: 600 }}
+          />
+        </Tabs>
       </Box>
 
       {pageError ? (
@@ -497,275 +508,224 @@ export default function Dashboard() {
       ) : null}
 
       {!pageError ? (
-        <Box sx={{ mb: 4 }}>
-          <Box
-            sx={{
-              borderRadius: "24px",
-              p: { xs: 2, sm: 3 },
-              mb: 3,
-              background: (theme) =>
-                `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.12)}, ${alpha(theme.palette.primary.main, 0.04)})`,
-              border: `1px solid ${alpha(theme.palette.primary.main, 0.18)}`,
-              display: "grid",
-              gap: 1.5,
-            }}
-          >
-            <Stack
-              direction={{ xs: "column", sm: "row" }}
-              spacing={1.5}
-              sx={{
-                alignItems: { xs: "flex-start", sm: "center" },
-                justifyContent: "space-between",
-              }}
-            >
-              <Box sx={{ minWidth: 0 }}>
-                <Box
-                  sx={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: "14px",
-                    display: "grid",
-                    placeItems: "center",
-                    mb: 1,
-                    bgcolor: "primary.main",
-                    color: "primary.contrastText",
-                    boxShadow: `0 8px 24px ${alpha(theme.palette.primary.main, 0.4)}`,
-                  }}
-                >
-                  <DnsRounded />
-                </Box>
-                <Typography variant="overline" color="textSecondary" sx={{ mb: 0.25 }}>
-                  DNS Records
-                </Typography>
-                <Typography
-                  variant="h3"
-                  component="h2"
-                  sx={{ fontFamily: FONT_DISPLAY, mb: 0.5 }}
-                >
-                  Custom records on <span style={{ fontWeight: 700 }}>.rc</span>
-                </Typography>
-                <Typography
-                  variant="body2"
-                  color="textSecondary"
-                  sx={{ maxWidth: 560, lineHeight: 1.7 }}
-                >
-                  Create A, AAAA, CNAME and TXT records inside <code style={{ fontFamily: FONT_MONO, fontSize: "0.85em", color: "text.secondary" }}>name.rc.yourdomain</code>. Every record resolves through our own nameservers, with no quota. Flip the toggle to Proxied to hide the origin behind Cloudflare — exactly like the orange cloud.
-                </Typography>
-              </Box>
-              <Box sx={{ flexShrink: 0, minWidth: 160 }}>
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  color="primary"
-                  label="Unlimited records"
-                />
-              </Box>
-            </Stack>
-          </Box>
-          <DnsRecordsPanel onFeedback={setTransientFeedback} />
-        </Box>
-      ) : null}
-
-      <Collapse in={showAddForm && !pageError} unmountOnExit>
-        <Card sx={{ mb: 3 }}>
-          <CardContent>
-            <Typography variant="overline" color="textSecondary">
-              Create route
-            </Typography>
-            <Typography variant="h3" component="h2" sx={{ mt: 0.25 }}>
-              Register a new subdomain
-            </Typography>
-            <Typography
-              variant="body2"
-              color="textSecondary"
-              sx={{ mt: 0.75, mb: 2.5, maxWidth: 640 }}
-            >
-              Pick a route type first: proxied routes forward traffic to a
-              destination host and port, while redirects send visitors
-              straight to a URL.
-            </Typography>
-
-            {addError ? (
-              <Alert severity="error" sx={{ mb: 2.5 }} role="alert">
-                {addError}
-              </Alert>
-            ) : null}
-
-            <Box
-              component="form"
-              onSubmit={handleAddSubmit}
-              sx={{ display: "grid", gap: 2.5 }}
-            >
-              <Box sx={{ display: "grid", gap: 2.5 }}>
-                <TextField
-                  label="Subdomain"
-                  required
-                  fullWidth
-                  placeholder="my-app"
-                  value={formData.subdomain}
-                  onChange={(event) =>
-                    setFormData({
-                      ...formData,
-                      subdomain: event.target.value
-                        .toLowerCase()
-                        .replace(/[^a-z0-9-]/g, ""),
-                    })
-                  }
-                  helperText="Keep it short and easy to recognize. A name is registered once, as a proxy or a redirect."
-                  slotProps={{
-                    htmlInput: {
-                      minLength: 2,
-                      maxLength: 63,
-                      autoCapitalize: "none",
-                      autoCorrect: "off",
-                      spellCheck: false,
-                      dir: "auto",
-                    },
-                    input: {
-                      endAdornment: (
-                        <InputAdornment position="end">
-                          <Select
-                            value={formData.domain}
-                            onChange={(event) =>
-                              setFormData({
-                                ...formData,
-                                domain: String(event.target.value),
-                              })
-                            }
-                            disabled={availableDomains.length === 0}
-                            aria-label="Available domain suffix"
-                            variant="standard"
-                            disableUnderline
-                            sx={{
-                              color: "text.secondary",
-                              fontWeight: 600,
-                              ml: 1,
-                              mr: -0.5,
-                            }}
-                          >
-                            {availableDomains.map((domain) => (
-                              <MenuItem key={domain} value={domain}>
-                                .{domain}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        </InputAdornment>
-                      ),
-                    },
-                  }}
-                />
-              </Box>
-
-              <TargetFields
-                value={formData}
-                onChange={(next) =>
-                  setFormData((prev) => ({ ...prev, ...next }))
-                }
-              />
-
-              <Box
-                sx={{
-                  display: "flex",
-                  flexDirection: {
-                    xs: "column-reverse",
-                    sm: "row",
-                  },
-                  justifyContent: "space-between",
-                  alignItems: { xs: "stretch", sm: "center" },
-                  gap: 1.5,
-                }}
+        <Box>
+          {activeTab === "records" ? (
+            <DnsRecordsPanel onFeedback={setTransientFeedback} />
+          ) : (
+            <>
+              <Button
+                variant="contained"
+                size="large"
+                startIcon={showAddForm ? <CloseRounded /> : <AddRounded />}
+                onClick={() => setShowAddForm((current) => !current)}
+                sx={{ width: { xs: "100%", md: "auto" }, mb: 3 }}
               >
-                <Typography variant="caption" color="textSecondary">
-                  {availableDomains.length > 0
-                    ? "Changes take effect immediately after registration."
-                    : "No domain suffixes are available right now."}
-                </Typography>
-                <Stack direction="row" spacing={1}>
-                  <Button
-                    type="button"
-                    color="inherit"
-                    onClick={() => setShowAddForm(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    variant="contained"
-                    disabled={
-                      isSubmitting || availableDomains.length === 0
-                    }
-                    startIcon={
-                      isSubmitting ? (
-                        <CircularProgress size={16} color="inherit" />
-                      ) : undefined
-                    }
-                  >
-                    Register domain
-                  </Button>
-                </Stack>
-              </Box>
-            </Box>
-          </CardContent>
-        </Card>
-      </Collapse>
+                {showAddForm ? "Hide form" : "New domain"}
+              </Button>
+              <Collapse in={showAddForm && !pageError} unmountOnExit>
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Typography variant="overline" color="textSecondary">
+                      Create route
+                    </Typography>
+                    <Typography variant="h3" component="h2" sx={{ mt: 0.25 }}>
+                      Register a new subdomain
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      color="textSecondary"
+                      sx={{ mt: 0.75, mb: 2.5, maxWidth: 640 }}
+                    >
+                      Pick a route type first: proxied routes forward traffic
+                      to a destination host and port, while redirects send
+                      visitors straight to a URL.
+                    </Typography>
 
-      {!pageError && domains.length === 0 ? (
-        <Card
-          sx={{
-            borderStyle: "dashed",
-            textAlign: "center",
-            py: 6,
-            px: 3,
-          }}
-        >
-          <Box
-            sx={{
-              width: 56,
-              height: 56,
-              borderRadius: "50%",
-              mx: "auto",
-              display: "grid",
-              placeItems: "center",
-              bgcolor: "primary.main",
-              color: "primary.contrastText",
-            }}
-          >
-            <LanguageRounded />
-          </Box>
-          <Typography variant="h3" component="h2" sx={{ mt: 2 }}>
-            No routes yet
-          </Typography>
-          <Typography
-            variant="body2"
-            color="textSecondary"
-            sx={{ maxWidth: 420, mx: "auto", mt: 1 }}
-          >
-            Start by registering a subdomain, then point it at the service
-            or tunnel you want to expose.
-          </Typography>
-          <Button
-            variant="contained"
-            startIcon={<AddRounded />}
-            onClick={() => setShowAddForm(true)}
-            sx={{ mt: 2.5 }}
-          >
-            Register your first domain
-          </Button>
-        </Card>
-      ) : !pageError ? (
-        <Box sx={{ display: "grid", gap: 2.5 }}>
-          {domains.map((domain) => (
-            <DomainRow
-              key={domain.id}
-              domain={domain}
-              onDelete={handleDelete}
-              onUpdate={handleUpdate}
-              onSaveRules={handleSaveRules}
-              isUpdating={updatingId === domain.id}
-              isDeleting={deletingId === domain.id}
-              isSavingRules={rulesSavingId === domain.id}
-            />
-          ))}
+                    {addError ? (
+                      <Alert severity="error" sx={{ mb: 2.5 }} role="alert">
+                        {addError}
+                      </Alert>
+                    ) : null}
+
+                    <Box
+                      component="form"
+                      onSubmit={handleAddSubmit}
+                      sx={{ display: "grid", gap: 2.5 }}
+                    >
+                      <Box sx={{ display: "grid", gap: 2.5 }}>
+                        <TextField
+                          label="Subdomain"
+                          required
+                          fullWidth
+                          placeholder="my-app"
+                          value={formData.subdomain}
+                          onChange={(event) =>
+                            setFormData({
+                              ...formData,
+                              subdomain: event.target.value
+                                .toLowerCase()
+                                .replace(/[^a-z0-9-]/g, ""),
+                            })
+                          }
+                          helperText="Keep it short and easy to recognize. A name is registered once, as a proxy or a redirect."
+                          slotProps={{
+                            htmlInput: {
+                              minLength: 2,
+                              maxLength: 63,
+                              autoCapitalize: "none",
+                              autoCorrect: "off",
+                              spellCheck: false,
+                              dir: "auto",
+                            },
+                            input: {
+                              endAdornment: (
+                                <InputAdornment position="end">
+                                  <Select
+                                    value={formData.domain}
+                                    onChange={(event) =>
+                                      setFormData({
+                                        ...formData,
+                                        domain: String(event.target.value),
+                                      })
+                                    }
+                                    disabled={availableDomains.length === 0}
+                                    aria-label="Available domain suffix"
+                                    variant="standard"
+                                    disableUnderline
+                                    sx={{
+                                      color: "text.secondary",
+                                      fontWeight: 600,
+                                      ml: 1,
+                                      mr: -0.5,
+                                    }}
+                                  >
+                                    {availableDomains.map((domain) => (
+                                      <MenuItem key={domain} value={domain}>
+                                        .{domain}
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </InputAdornment>
+                              ),
+                            },
+                          }}
+                        />
+                      </Box>
+
+                      <TargetFields
+                        value={formData}
+                        onChange={(next) =>
+                          setFormData((prev) => ({ ...prev, ...next }))
+                        }
+                      />
+
+                      <Box
+                        sx={{
+                          display: "flex",
+                          flexDirection: {
+                            xs: "column-reverse",
+                            sm: "row",
+                          },
+                          justifyContent: "space-between",
+                          alignItems: { xs: "stretch", sm: "center" },
+                          gap: 1.5,
+                        }}
+                      >
+                        <Typography variant="caption" color="textSecondary">
+                          {availableDomains.length > 0
+                            ? "Changes take effect immediately after registration."
+                            : "No domain suffixes are available right now."}
+                        </Typography>
+                        <Stack direction="row" spacing={1}>
+                          <Button
+                            type="button"
+                            color="inherit"
+                            onClick={() => setShowAddForm(false)}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            type="submit"
+                            variant="contained"
+                            disabled={
+                              isSubmitting || availableDomains.length === 0
+                            }
+                            startIcon={
+                              isSubmitting ? (
+                                <CircularProgress size={16} color="inherit" />
+                              ) : undefined
+                            }
+                          >
+                            Register domain
+                          </Button>
+                        </Stack>
+                      </Box>
+                    </Box>
+                  </CardContent>
+                </Card>
+              </Collapse>
+
+              {!pageError && domains.length === 0 ? (
+                <Card
+                  sx={{
+                    borderStyle: "dashed",
+                    textAlign: "center",
+                    py: 6,
+                    px: 3,
+                  }}
+                >
+                  <Box
+                    sx={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: "50%",
+                      mx: "auto",
+                      display: "grid",
+                      placeItems: "center",
+                      bgcolor: "primary.main",
+                      color: "primary.contrastText",
+                    }}
+                  >
+                    <LanguageRounded />
+                  </Box>
+                  <Typography variant="h3" component="h2" sx={{ mt: 2 }}>
+                    No routes yet
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    color="textSecondary"
+                    sx={{ maxWidth: 420, mx: "auto", mt: 1 }}
+                  >
+                    Start by registering a subdomain, then point it at the
+                    service or tunnel you want to expose.
+                  </Typography>
+                  <Button
+                    variant="contained"
+                    startIcon={<AddRounded />}
+                    onClick={() => setShowAddForm(true)}
+                    sx={{ mt: 2.5 }}
+                  >
+                    Register your first domain
+                  </Button>
+                </Card>
+              ) : !pageError ? (
+                <Box sx={{ display: "grid", gap: 2.5 }}>
+                  {domains.map((domain) => (
+                    <DomainRow
+                      key={domain.id}
+                      domain={domain}
+                      onDelete={handleDelete}
+                      onUpdate={handleUpdate}
+                      onSaveRules={handleSaveRules}
+                      isUpdating={updatingId === domain.id}
+                      isDeleting={deletingId === domain.id}
+                      isSavingRules={rulesSavingId === domain.id}
+                    />
+                  ))}
+                </Box>
+              ) : null}
+            </>
+          )}
         </Box>
       ) : null}
 

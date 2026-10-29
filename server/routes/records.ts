@@ -1,20 +1,13 @@
 import { isIP } from "node:net";
 import { and, asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
-import {
-  CfError,
-  ensureProxyCarrier,
-  ensureRecordZoneDelegation,
-  removeProxiedRecord,
-  upsertProxiedRecord,
-} from "../cloudflare";
+import { CfError, ensureRecordZoneDelegation } from "../cloudflare";
 import {
   PDNS_API_KEY,
   PDNS_API_URL,
   RECORD_DOMAINS,
   RECORD_MODE_SUBDOMAIN,
   RECORD_NAMESERVERS,
-  RECORD_PROXY_CARRIER,
 } from "../config";
 import { db } from "../db";
 import {
@@ -28,21 +21,14 @@ import { jwtMiddleware } from "../middleware/auth";
 // from each supported base domain as `rc.<base>` (Cloudflare only holds the
 // NS records), so record counts are unlimited. Postgres is the source of
 // truth: every change rebuilds the affected rrset from the stored rows.
-//
-// A record has two modes, like Cloudflare's toggle:
-//   * "dns-only"  - PowerDNS answers with the real value,
-//   * "proxied"   - the origin is hidden: a proxied record with the real
-//     value is kept in the Cloudflare zone (via API) and PowerDNS answers
-//     with a CNAME to the proxy carrier, so resolvers get Cloudflare's
-//     anycast IPs while TLS/HTTP keep using the record's own hostname.
 
 export const recordsRouter = new Hono<{ Variables: { user: any } }>();
 recordsRouter.use("*", jwtMiddleware);
 
 type RecordType = "A" | "AAAA" | "CNAME" | "TXT";
-type RecordMode = "dns-only" | "proxied";
+type RecordMode = "dns-only";
 const RECORD_TYPES: RecordType[] = ["A", "AAAA", "CNAME", "TXT"];
-const RECORD_MODES: RecordMode[] = ["dns-only", "proxied"];
+const RECORD_MODES: RecordMode[] = ["dns-only"];
 
 function isRecordType(value: string): value is RecordType {
   return RECORD_TYPES.includes(value as RecordType);
@@ -256,7 +242,9 @@ async function createZone(zone: string) {
       body: JSON.stringify({
         name: fqdn,
         kind: "Native",
-        nameservers: RECORD_NAMESERVERS.map((nameserver) => `${nameserver}.`),
+        nameservers: RECORD_NAMESERVERS.map(
+          (nameserver) => `${nameserver}.`,
+        ),
       }),
     },
   );
@@ -339,10 +327,9 @@ async function patchRrsets(
   }
 }
 
-// Rebuilds every rrset at `fqdn` in its zone from the stored rows, and
-// keeps the Cloudflare side in sync for proxied rows. This is the only
-// function that writes to PowerDNS for a name, so row and DNS state can
-// never drift apart.
+// Rebuilds every rrset at `fqdn` in its zone from the stored rows. This is
+// the only function that writes to PowerDNS for a name, so row and DNS state
+// can never drift apart.
 async function publishName(fqdn: string, zone: string): Promise<void> {
   const rows = await rowsForName(fqdn);
 
@@ -358,45 +345,7 @@ async function publishName(fqdn: string, zone: string): Promise<void> {
     return;
   }
 
-  const mode = (rows[0]?.recordMode ?? "dns-only") as RecordMode;
-
-  if (mode === "proxied") {
-    // Cloudflare holds the real value and routes the traffic; PowerDNS
-    // only points resolvers at Cloudflare through the carrier name.
-    await ensureProxyCarrier();
-    for (const row of rows) {
-      if (row.type === "TXT") {
-        continue;
-      }
-      await upsertProxiedRecord(
-        fqdn,
-        row.type as "A" | "AAAA" | "CNAME",
-        row.value,
-      );
-    }
-    await patchRrsets(zone, [
-      {
-        name: `${fqdn}.`,
-        type: "CNAME",
-        changetype: "REPLACE",
-        ttl: rows[0]?.ttl ?? DEFAULT_TTL,
-        records: [
-          { content: `${RECORD_PROXY_CARRIER}.`, disabled: false },
-        ],
-      },
-      {
-        name: `${fqdn}.`,
-        type: "A",
-        changetype: "DELETE",
-      },
-      {
-        name: `${fqdn}.`,
-        type: "AAAA",
-        changetype: "DELETE",
-      },
-    ]);
-    return;
-  }
+  const _mode = (rows[0]?.recordMode ?? "dns-only") as RecordMode;
 
   const byType = new Map<string, RecordRow[]>();
   for (const row of rows) {
@@ -499,12 +448,9 @@ recordsRouter.post("/", async (c) => {
 
   const modeInput = String(body.mode ?? "dns-only");
   if (!isRecordMode(modeInput)) {
-    return c.json({ error: "Mode must be dns-only or proxied" }, 400);
+    return c.json({ error: "Mode must be dns-only" }, 400);
   }
   const mode: RecordMode = modeInput;
-  if (mode === "proxied" && type === "TXT") {
-    return c.json({ error: "TXT records can only be DNS-only" }, 400);
-  }
 
   const ttl = Number(body.ttl ?? DEFAULT_TTL);
   if (!Number.isInteger(ttl) || ttl < MIN_TTL || ttl > MAX_TTL) {
@@ -568,21 +514,17 @@ recordsRouter.post("/", async (c) => {
     return c.json({ error: "Record already exists" }, 409);
   }
 
-  let createdProxied = false;
   try {
     await ensureZone(zone);
-    // Every `rc.<base>` zone needs its NS delegation in the parent zone
-    // before the record can resolve; cached after the first success.
-    await ensureRecordZoneDelegation(base);
-    if (mode === "proxied") {
-      await ensureProxyCarrier();
-      await upsertProxiedRecord(
-        fqdn,
-        type as "A" | "AAAA" | "CNAME",
-        value,
+    // The rc.<base> NS delegation is expected to exist in Cloudflare
+    // (set up once per base domain). Best-effort here so creating a record
+    // never depends on a Cloudflare token — your own nameservers answer it.
+    await ensureRecordZoneDelegation(base).catch((error) => {
+      console.error(
+        `Record zone delegation for ${base} not ready:`,
+        error,
       );
-      createdProxied = true;
-    }
+    });
 
     const inserted = await db
       .insert(dnsRecordsTable)
@@ -608,14 +550,6 @@ recordsRouter.post("/", async (c) => {
       await db
         .delete(dnsRecordsTable)
         .where(eq(dnsRecordsTable.id, record.id));
-      if (createdProxied && (await rowsForName(fqdn)).length === 0) {
-        await removeProxiedRecord(fqdn).catch((cleanupError) => {
-          console.error(
-            "Failed to clean up proxied record:",
-            cleanupError,
-          );
-        });
-      }
       throw publishError;
     }
 
@@ -668,14 +602,6 @@ recordsRouter.delete("/:id", async (c) => {
 
     try {
       await publishName(record.name, record.zone);
-      const remaining = await rowsForName(record.name);
-      if (record.recordMode === "proxied" && remaining.length === 0) {
-        // Best effort: a leftover proxied record cannot resolve anyway,
-        // because PowerDNS no longer answers for the name.
-        await removeProxiedRecord(record.name).catch((cleanupError) => {
-          console.error("Failed to remove proxied record:", cleanupError);
-        });
-      }
     } catch (publishError) {
       console.error("Failed to publish DNS record:", publishError);
       await db.insert(dnsRecordsTable).values({
