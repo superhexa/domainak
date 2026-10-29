@@ -115,8 +115,8 @@ export function timeToMinutes(value: string): number | null {
 }
 
 function formatMinutes(value: number): string {
-  const normalized = ((value % MINUTES_PER_DAY) + MINUTES_PER_DAY) %
-    MINUTES_PER_DAY;
+  const normalized =
+    ((value % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
   const hours = Math.floor(normalized / 60);
   const minutes = normalized % 60;
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
@@ -179,10 +179,14 @@ export function parseSettingsInput(
   }
   const mode = geoMode as GeoMode;
 
-  const rawCountries = Array.isArray(input.countries) ? input.countries : [];
+  const rawCountries = Array.isArray(input.countries)
+    ? input.countries
+    : [];
   const countries: string[] = [];
   for (const entry of rawCountries) {
-    const code = String(entry ?? "").trim().toUpperCase();
+    const code = String(entry ?? "")
+      .trim()
+      .toUpperCase();
     if (!code) {
       continue;
     }
@@ -325,7 +329,12 @@ async function refreshServiceWindows(): Promise<void> {
     .where(eq(domainTable.serviceHours, true));
 
   for (const row of rows) {
-    const payload = buildSettingsPayload(row);
+    // Drizzle widens the varchar column to `string`; the column itself is
+    // constrained to the GeoMode values by parseSettingsInput.
+    const payload = buildSettingsPayload({
+      ...row,
+      geoMode: row.geoMode as GeoMode,
+    });
     if (payload === null) {
       continue;
     }

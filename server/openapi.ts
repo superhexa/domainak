@@ -28,6 +28,11 @@ export const openApiDoc: OpenAPIV3.Document = {
   tags: [
     { name: "Auth", description: "GitHub OAuth authentication" },
     { name: "Domains", description: "User domain management" },
+    {
+      name: "Records",
+      description:
+        "DNS records (A, AAAA, CNAME, TXT) in the delegated zone",
+    },
     { name: "Stats", description: "Domain visitor statistics" },
     { name: "Admin", description: "Admin-only moderation endpoints" },
   ],
@@ -446,6 +451,157 @@ export const openApiDoc: OpenAPIV3.Document = {
           "200": { description: "IP banned" },
           "400": { description: "IP required or already banned" },
           "403": { description: "Forbidden — admins only" },
+        },
+      },
+    },
+
+    // ─── Records ────────────────────────────────────────
+    "/records": {
+      get: {
+        tags: ["Records"],
+        summary: "List user's DNS records",
+        description:
+          "Returns every DNS record owned by the authenticated user plus the base domains that support record mode.",
+        security: [{ BearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "List of records",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    domains: {
+                      type: "array",
+                      description:
+                        "Base domains where records can be created, with their rc zone",
+                      items: {
+                        type: "object",
+                        properties: {
+                          domain: {
+                            type: "string",
+                            example: "domainak.qzz.io",
+                          },
+                          zone: {
+                            type: "string",
+                            example: "rc.domainak.qzz.io",
+                          },
+                        },
+                      },
+                    },
+                    records: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: { type: "integer" },
+                          name: {
+                            type: "string",
+                            example: "app.rc.domainak.qzz.io",
+                          },
+                          type: {
+                            type: "string",
+                            enum: ["A", "AAAA", "CNAME", "TXT"],
+                          },
+                          value: {
+                            type: "string",
+                            example: "203.0.113.10",
+                          },
+                          ttl: { type: "integer", example: 300 },
+                          zone: {
+                            type: "string",
+                            example: "rc.domainak.qzz.io",
+                          },
+                          recordMode: {
+                            type: "string",
+                            enum: ["dns-only", "proxied"],
+                          },
+                          createdAt: {
+                            type: "string",
+                            format: "date-time",
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "401": { description: "Unauthorized" },
+        },
+      },
+      post: {
+        tags: ["Records"],
+        summary: "Create a DNS record",
+        description:
+          "Validates the record and publishes it to the PowerDNS zone of the chosen base domain. proxied mode also creates a proxied record in Cloudflare so the origin stays hidden.",
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["base", "name", "type", "value"],
+                properties: {
+                  base: {
+                    type: "string",
+                    description:
+                      "Base domain that supports record mode (see GET /records)",
+                    example: "domainak.qzz.io",
+                  },
+                  name: {
+                    type: "string",
+                    description:
+                      "Name relative to the rc zone, @ for its apex, or a full name inside it",
+                    example: "app",
+                  },
+                  type: {
+                    type: "string",
+                    enum: ["A", "AAAA", "CNAME", "TXT"],
+                  },
+                  value: { type: "string", example: "203.0.113.10" },
+                  ttl: { type: "integer", example: 300 },
+                  mode: {
+                    type: "string",
+                    enum: ["dns-only", "proxied"],
+                    default: "dns-only",
+                    description:
+                      "dns-only answers with the real value; proxied hides the origin behind Cloudflare. TXT is dns-only only.",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": { description: "Record created" },
+          "400": { description: "Validation failed" },
+          "401": { description: "Unauthorized" },
+          "403": { description: "Domain or target is banned" },
+          "409": { description: "Record already exists" },
+        },
+      },
+    },
+    "/records/{id}": {
+      delete: {
+        tags: ["Records"],
+        summary: "Delete a DNS record",
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "integer" },
+          },
+        ],
+        responses: {
+          "200": { description: "Record deleted" },
+          "401": { description: "Unauthorized" },
+          "403": { description: "Forbidden" },
+          "404": { description: "Record not found" },
         },
       },
     },

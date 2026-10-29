@@ -19,6 +19,8 @@ Practical guide for agentic coding assistants working in `domainak`.
 - `.github/workflows/` - deployment workflows
 - `docker-compose.yaml` - container stack
 - `nginx.conf` - OpenResty routing config
+- `pdns.conf` - PowerDNS drop-in config for the delegated records zone (A/AAAA/CNAME/TXT served by domainak itself, unlimited by Cloudflare quotas)
+- `server/cloudflare.ts` - Cloudflare API client: `rc.<base>` NS delegations and proxied DNS records (needs `CLOUDFLARE_API_TOKEN`)
 - `unregistered.lua` - Lua init file for OpenResty (unregistered-host and banned-host page templates, red accent for banned); mounted/downloaded alongside `nginx.conf` because inline `_by_lua_block` code is limited by nginx's 8 KB config buffer
 - `setup.sh` - guided install/update script
 
@@ -84,6 +86,7 @@ docker compose down
 docker compose ps
 docker compose logs backend --tail=200
 docker compose logs openresty --tail=200
+docker compose logs pdns --tail=200
 docker compose logs cloudflared --tail=200
 ```
 
@@ -148,10 +151,10 @@ Frontend `eslint.config.js` additionally enforces:
 - Keep route-local helpers near the route file unless broadly reusable.
 - Use Drizzle query builders directly; current code favors explicit queries.
 - Pagination helpers are plain functions near route definitions.
-- Middleware returns JSON errors instead of throwing framework exceptions.
+- Middleware returns JSON errors instead of throwing framework exceptions.## Config and Deployment
 
-## Config and Deployment
 - Backend env handling is centralized in `server/config.ts`.
+- DNS records live in a PowerDNS zone per base domain (`rc.<domain>`, from `DOMAINS` minus `RECORD_DOMAIN_EXCLUDES`, default `z44d.com`); `CLOUDFLARE_API_TOKEN` publishes the NS delegations and proxied records.
 - Frontend API base URL comes from `import.meta.env.VITE_API_URL`, which deployment currently feeds from `BACKEND_URL` during the frontend image build.
 - `docker-compose.yaml` builds local backend/frontend images and tags them with the GHCR image names.
 - `setup.sh` writes deployment env vars into `~/.domainak/.env`.

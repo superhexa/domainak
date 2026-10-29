@@ -5,6 +5,7 @@ import { openApiDoc } from "./openapi";
 import { adminRouter } from "./routes/admin";
 import { authRouter } from "./routes/auth";
 import { domainsRouter } from "./routes/domains";
+import { recordsRouter, warmupRecordZones } from "./routes/records";
 import { statsRouter } from "./routes/stats";
 import { startSettingsRefresher } from "./settings";
 
@@ -14,6 +15,7 @@ const apiRouter = new Hono();
 function registerApiRoutes(router: Hono) {
   router.route("/auth", authRouter);
   router.route("/domains", domainsRouter);
+  router.route("/records", recordsRouter);
   router.route("/admin", adminRouter);
   router.route("/stats", statsRouter);
 
@@ -53,3 +55,7 @@ console.log(
 // Keeps the UTC offsets embedded in published service-window payloads in
 // sync with daylight saving transitions.
 startSettingsRefresher();
+
+// Creates the rc.<base> record zones and their NS delegations up front so
+// the first record (and every lookup) works without extra setup.
+warmupRecordZones();

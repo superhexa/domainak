@@ -8,6 +8,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
 
@@ -101,4 +102,44 @@ export const bannedIpsTable = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [index("banned_ips_created_at_idx").on(table.createdAt)],
+);
+
+// One row per DNS record, served by the delegated PowerDNS zone of the
+// row's `zone` column (for example rc.domainak.qzz.io, or the legacy
+// records.domainak.qzz.io). The row is the source of truth: every change
+// rebuilds the affected rrset in PowerDNS, and proxied rows are mirrored
+// into Cloudflare through the API (see routes/records.ts and cloudflare.ts).
+export const dnsRecordsTable = pgTable(
+  "dns_record",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => userTable.id),
+    // Fully qualified owner name without a trailing dot, e.g.
+    // "tgram.rc.domainak.qzz.io".
+    name: varchar("name", { length: 253 }).notNull(),
+    type: varchar("type", { length: 5 }).notNull(),
+    value: text("value").notNull(),
+    ttl: integer("ttl").default(300).notNull(),
+    // PowerDNS zone that answers this record, e.g. "rc.domainak.qzz.io".
+    zone: varchar("zone", { length: 253 }).default("").notNull(),
+    // "dns-only" answers with the real value straight from PowerDNS;
+    // "proxied" hides the origin behind Cloudflare: the PowerDNS answer
+    // becomes a CNAME to the proxy carrier and a proxied record with the
+    // real value is kept in the Cloudflare zone.
+    recordMode: varchar("record_mode", { length: 16 })
+      .default("dns-only")
+      .notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("dns_record_user_id_idx").on(table.userId),
+    index("dns_record_zone_idx").on(table.zone),
+    uniqueIndex("dns_record_name_type_value_idx").on(
+      table.name,
+      table.type,
+      table.value,
+    ),
+  ],
 );

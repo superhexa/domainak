@@ -2,6 +2,7 @@ import {
   AddRounded,
   CloseRounded,
   DeleteOutlineRounded,
+  DnsRounded,
   LanguageRounded,
   ModeEditOutlineRounded,
   QueryStatsRounded,
@@ -10,6 +11,7 @@ import {
 import {
   Alert,
   Avatar,
+  alpha,
   Box,
   Button,
   Card,
@@ -28,7 +30,6 @@ import {
   Stack,
   TextField,
   Typography,
-  alpha,
   useTheme,
 } from "@mui/material";
 import {
@@ -45,6 +46,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DnsRecordsPanel } from "../components/DnsRecordsPanel";
 import { DomainRulesPanel } from "../components/DomainRulesPanel";
 import { LoadingScreen } from "../components/LoadingScreen";
 import { ApiError, api } from "../lib/api";
@@ -108,6 +110,8 @@ export default function Dashboard() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [rulesSavingId, setRulesSavingId] = useState<number | null>(null);
+
+  const theme = useTheme();
 
   const setTransientFeedback = useCallback(
     (message: string, severity: Feedback["severity"] = "success") => {
@@ -229,7 +233,8 @@ export default function Dashboard() {
       // A subdomain is registered once, for a single route type (proxy or
       // redirect). Catch the repeat locally so the message shows up
       // instantly, before the request.
-      const fullHost = `${trimmedSubdomain}.${formData.domain}`.toLowerCase();
+      const fullHost =
+        `${trimmedSubdomain}.${formData.domain}`.toLowerCase();
       const isUsed = domains.some(
         (item) => item.subdomain.toLowerCase() === fullHost,
       );
@@ -249,7 +254,9 @@ export default function Dashboard() {
         try {
           const redirectTarget = new URL(trimmedTargetUrl);
           if (!["http:", "https:"].includes(redirectTarget.protocol)) {
-            setAddError("Redirect URLs must start with http:// or https://.");
+            setAddError(
+              "Redirect URLs must start with http:// or https://.",
+            );
             return;
           }
         } catch {
@@ -327,7 +334,10 @@ export default function Dashboard() {
         setTransientFeedback("Domain removed from your workspace.");
       } catch (error: unknown) {
         setFeedback({
-          message: getErrorMessage(error, "We could not remove that domain."),
+          message: getErrorMessage(
+            error,
+            "We could not remove that domain.",
+          ),
           severity: "error",
         });
       } finally {
@@ -342,7 +352,10 @@ export default function Dashboard() {
       setFeedback(null);
       setUpdatingId(id);
       try {
-        const res = await api.put<{ domain: Domain }>(`/domains/${id}`, payload);
+        const res = await api.put<{ domain: Domain }>(
+          `/domains/${id}`,
+          payload,
+        );
         const updated = res.data.domain;
         // Merged instead of replaced: the target endpoint echoes the row
         // without the derived `serviceWindow`, which the summary chip needs.
@@ -355,7 +368,10 @@ export default function Dashboard() {
         return true;
       } catch (error: unknown) {
         setFeedback({
-          message: getErrorMessage(error, "We could not update that route."),
+          message: getErrorMessage(
+            error,
+            "We could not update that route.",
+          ),
           severity: "error",
         });
         return false;
@@ -438,8 +454,8 @@ export default function Dashboard() {
             color="textSecondary"
             sx={{ mt: 1, maxWidth: 640 }}
           >
-            Register a destination, review traffic only when you need it, and
-            keep the day-to-day workspace focused on routing decisions.
+            Register a destination, review traffic only when you need it,
+            and keep the day-to-day workspace focused on routing decisions.
           </Typography>
         </Box>
 
@@ -471,11 +487,83 @@ export default function Dashboard() {
             </Button>
           }
         >
-          <Typography variant="subtitle2">Workspace unavailable</Typography>
+          <Typography variant="subtitle2">
+            Workspace unavailable
+          </Typography>
           <Typography variant="body2" dir="auto">
             {pageError}
           </Typography>
         </Alert>
+      ) : null}
+
+      {!pageError ? (
+        <Box sx={{ mb: 4 }}>
+          <Box
+            sx={{
+              borderRadius: "24px",
+              p: { xs: 2, sm: 3 },
+              mb: 3,
+              background: (theme) =>
+                `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.12)}, ${alpha(theme.palette.primary.main, 0.04)})`,
+              border: `1px solid ${alpha(theme.palette.primary.main, 0.18)}`,
+              display: "grid",
+              gap: 1.5,
+            }}
+          >
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={1.5}
+              sx={{
+                alignItems: { xs: "flex-start", sm: "center" },
+                justifyContent: "space-between",
+              }}
+            >
+              <Box sx={{ minWidth: 0 }}>
+                <Box
+                  sx={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: "14px",
+                    display: "grid",
+                    placeItems: "center",
+                    mb: 1,
+                    bgcolor: "primary.main",
+                    color: "primary.contrastText",
+                    boxShadow: `0 8px 24px ${alpha(theme.palette.primary.main, 0.4)}`,
+                  }}
+                >
+                  <DnsRounded />
+                </Box>
+                <Typography variant="overline" color="textSecondary" sx={{ mb: 0.25 }}>
+                  DNS Records
+                </Typography>
+                <Typography
+                  variant="h3"
+                  component="h2"
+                  sx={{ fontFamily: FONT_DISPLAY, mb: 0.5 }}
+                >
+                  Custom records on <span style={{ fontWeight: 700 }}>.rc</span>
+                </Typography>
+                <Typography
+                  variant="body2"
+                  color="textSecondary"
+                  sx={{ maxWidth: 560, lineHeight: 1.7 }}
+                >
+                  Create A, AAAA, CNAME and TXT records inside <code style={{ fontFamily: FONT_MONO, fontSize: "0.85em", color: "text.secondary" }}>name.rc.yourdomain</code>. Every record resolves through our own nameservers, with no quota. Flip the toggle to Proxied to hide the origin behind Cloudflare — exactly like the orange cloud.
+                </Typography>
+              </Box>
+              <Box sx={{ flexShrink: 0, minWidth: 160 }}>
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  color="primary"
+                  label="Unlimited records"
+                />
+              </Box>
+            </Stack>
+          </Box>
+          <DnsRecordsPanel onFeedback={setTransientFeedback} />
+        </Box>
       ) : null}
 
       <Collapse in={showAddForm && !pageError} unmountOnExit>
@@ -493,8 +581,8 @@ export default function Dashboard() {
               sx={{ mt: 0.75, mb: 2.5, maxWidth: 640 }}
             >
               Pick a route type first: proxied routes forward traffic to a
-              destination host and port, while redirects send visitors straight
-              to a URL.
+              destination host and port, while redirects send visitors
+              straight to a URL.
             </Typography>
 
             {addError ? (
@@ -652,8 +740,8 @@ export default function Dashboard() {
             color="textSecondary"
             sx={{ maxWidth: 420, mx: "auto", mt: 1 }}
           >
-            Start by registering a subdomain, then point it at the service or
-            tunnel you want to expose.
+            Start by registering a subdomain, then point it at the service
+            or tunnel you want to expose.
           </Typography>
           <Button
             variant="contained"
@@ -711,10 +799,7 @@ const DomainRow = memo(function DomainRow({
 }: {
   domain: Domain;
   onDelete: (id: number) => void;
-  onUpdate: (
-    id: number,
-    payload: DomainUpdatePayload,
-  ) => Promise<boolean>;
+  onUpdate: (id: number, payload: DomainUpdatePayload) => Promise<boolean>;
   onSaveRules: (
     id: number,
     payload: DomainRulesPayload,
@@ -886,7 +971,9 @@ const DomainRow = memo(function DomainRow({
               color="textSecondary"
               sx={{ display: "block", lineHeight: 1.4 }}
             >
-              {domain.mode === "redirect" ? "Redirect route" : "Proxied route"}
+              {domain.mode === "redirect"
+                ? "Redirect route"
+                : "Proxied route"}
             </Typography>
             <Typography
               dir="auto"
@@ -982,8 +1069,8 @@ const DomainRow = memo(function DomainRow({
               color="textSecondary"
               sx={{ maxWidth: 520, mt: 0.75, mb: 2.5 }}
             >
-              Change the route type or destination. The subdomain name stays
-              the same, and changes go live immediately.
+              Change the route type or destination. The subdomain name
+              stays the same, and changes go live immediately.
             </Typography>
 
             {editError ? (
@@ -1062,8 +1149,8 @@ const DomainRow = memo(function DomainRow({
                     color="textSecondary"
                     sx={{ maxWidth: 520 }}
                   >
-                    Open yearly traffic only when you need it. The default view
-                    keeps the main list easier to scan.
+                    Open yearly traffic only when you need it. The default
+                    view keeps the main list easier to scan.
                   </Typography>
                 </Box>
                 <FormControl size="small" sx={{ minWidth: 130 }}>
@@ -1357,7 +1444,9 @@ function TargetFields({
             type="number"
             placeholder="8080"
             value={value.port}
-            onChange={(event) => onChange({ ...value, port: event.target.value })}
+            onChange={(event) =>
+              onChange({ ...value, port: event.target.value })
+            }
             helperText="The service port that receives requests."
             slotProps={{
               htmlInput: {

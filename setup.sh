@@ -132,6 +132,8 @@ load_existing_env() {
       GITHUB_CLIENT_SECRET) GITHUB_CLIENT_SECRET_DEFAULT="$value" ;;
       ADMIN_IDS) ADMIN_IDS_DEFAULT="$value" ;;
       JWT_SECRET) JWT_SECRET_DEFAULT="$value" ;;
+      CLOUDFLARE_API_TOKEN) CLOUDFLARE_API_TOKEN_DEFAULT="$value" ;;
+      RECORD_DOMAIN_EXCLUDES) RECORD_DOMAIN_EXCLUDES_DEFAULT="$value" ;;
       GHCR_REGISTRY) GHCR_REGISTRY_DEFAULT="$value" ;;
       GHCR_OWNER) GHCR_OWNER_DEFAULT="$value" ;;
     esac
@@ -234,6 +236,8 @@ $(write_env_line GITHUB_CLIENT_ID "$GITHUB_CLIENT_ID")
 $(write_env_line GITHUB_CLIENT_SECRET "$GITHUB_CLIENT_SECRET")
 $(write_env_line ADMIN_IDS "$ADMIN_IDS")
 $(write_env_line JWT_SECRET "$JWT_SECRET")
+$(write_env_line CLOUDFLARE_API_TOKEN "$CLOUDFLARE_API_TOKEN")
+$(write_env_line RECORD_DOMAIN_EXCLUDES "$RECORD_DOMAIN_EXCLUDES")
 EOF
 }
 
@@ -332,6 +336,8 @@ main() {
   prompt_value GITHUB_CLIENT_SECRET "GitHub OAuth Client Secret" "${GITHUB_CLIENT_SECRET_DEFAULT:-}" true true "Required. Hidden while you type."
   prompt_value ADMIN_IDS "Admin GitHub User IDs" "${ADMIN_IDS_DEFAULT:-}" false false "Optional. Comma-separated GitHub numeric user IDs with admin access."
   prompt_value JWT_SECRET "JWT Secret" "${JWT_SECRET_DEFAULT:-}" true true "Required. Use a long random secret. Hidden while you type."
+  prompt_value CLOUDFLARE_API_TOKEN "Cloudflare API Token" "${CLOUDFLARE_API_TOKEN_DEFAULT:-}" false true "Optional. A token with Zone:DNS:Edit permission. Needed for rc.<domain> NS delegations and proxied DNS records. Hidden while you type."
+  prompt_value RECORD_DOMAIN_EXCLUDES "Record-mode Excluded Domains" "${RECORD_DOMAIN_EXCLUDES_DEFAULT:-z44d.com}" false false "Optional. Space or comma-separated base domains that must NOT serve DNS records. Defaults to z44d.com."
 
   write_env_file
   print_success "Environment file saved to ${ENV_FILE}"

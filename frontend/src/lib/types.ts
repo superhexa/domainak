@@ -60,6 +60,44 @@ export interface Domain {
   user?: User | null;
 }
 
+// DNS records (A, AAAA, CNAME, TXT) served from the delegated zone that
+// domainak runs itself, so they are not limited by Cloudflare record quotas.
+export type DnsRecordType = "A" | "AAAA" | "CNAME" | "TXT";
+
+// "dns-only" answers with the real value straight from PowerDNS;
+// "proxied" hides the origin behind Cloudflare, like the orange cloud.
+export type DnsRecordMode = "dns-only" | "proxied";
+
+// A base domain where records can be created. `zone` is what the record
+// names resolve inside, e.g. tgram.rc.domainak.qzz.io lives in
+// rc.domainak.qzz.io.
+export interface RecordDomain {
+  domain: string;
+  zone: string;
+}
+
+export interface DnsRecord {
+  id: number;
+  userId: number;
+  // Fully qualified name without a trailing dot, e.g.
+  // "tgram.rc.domainak.qzz.io".
+  name: string;
+  type: DnsRecordType;
+  value: string;
+  ttl: number;
+  // PowerDNS zone that answers this record, e.g. "rc.domainak.qzz.io".
+  zone: string;
+  recordMode: DnsRecordMode;
+  createdAt?: string;
+}
+
+// Payload of GET /records: the user's records plus the base domains that
+// support record mode.
+export interface RecordsResponse {
+  records: DnsRecord[];
+  domains: RecordDomain[];
+}
+
 export interface AdminUserRow {
   id: number;
   name: string;
