@@ -114,8 +114,6 @@ export default function Dashboard() {
   const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [rulesSavingId, setRulesSavingId] = useState<number | null>(null);
 
-  const theme = useTheme();
-
   const setTransientFeedback = useCallback(
     (message: string, severity: Feedback["severity"] = "success") => {
       setFeedback({ message, severity });
