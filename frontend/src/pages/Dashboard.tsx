@@ -28,8 +28,6 @@ import {
   Select,
   Snackbar,
   Stack,
-  Tabs,
-  Tab,
   TextField,
   Typography,
   useTheme,
@@ -48,7 +46,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { DnsRecordsPanel } from "../components/DnsRecordsPanel";
+import { DomainRecordsPanel } from "../components/DomainRecordsPanel";
 import { DomainRulesPanel } from "../components/DomainRulesPanel";
 import { LoadingScreen } from "../components/LoadingScreen";
 import { ApiError, api } from "../lib/api";
@@ -95,7 +93,6 @@ export default function Dashboard() {
   const [availableDomains, setAvailableDomains] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSuspended, setIsSuspended] = useState(false);
-  const [activeTab, setActiveTab] = useState<"records" | "domains">("records");
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [formData, setFormData] = useState({
@@ -448,35 +445,18 @@ export default function Dashboard() {
             sx={{ mb: 1 }}
           />
           <Typography variant="h1" component="h1" sx={{ mb: 0.5 }}>
-            {activeTab === "records" ? "DNS Records" : "Domains"}
+            Domains
           </Typography>
           <Typography
             variant="body1"
             color="textSecondary"
             sx={{ mt: 0.5, maxWidth: 640 }}
           >
-            {activeTab === "records"
-              ? "Create A, AAAA, CNAME and TXT records inside *.rc.yourdomain — served by your own nameservers with no quota, resolved through the tunnel with HTTPS."
-              : "Register a destination, review traffic only when you need it, and keep the day-to-day workspace focused on routing decisions."}
+            Register a destination, review traffic only when you need it,
+            and manage each domain&apos;s DNS records from its own
+            settings.
           </Typography>
         </Box>
-
-        <Tabs
-          value={activeTab === "records" ? 0 : 1}
-          onChange={(_, value) => setActiveTab(value === 0 ? "records" : "domains")}
-          sx={{ flexShrink: 0 }}
-        >
-          <Tab
-            icon={<DnsRounded />}
-            label="Records"
-            sx={{ minWidth: 110, textTransform: "none", fontWeight: 600 }}
-          />
-          <Tab
-            icon={<LanguageRounded />}
-            label="Domains"
-            sx={{ minWidth: 110, textTransform: "none", fontWeight: 600 }}
-          />
-        </Tabs>
       </Box>
 
       {pageError ? (
@@ -507,10 +487,7 @@ export default function Dashboard() {
 
       {!pageError ? (
         <Box>
-          {activeTab === "records" ? (
-            <DnsRecordsPanel onFeedback={setTransientFeedback} />
-          ) : (
-            <>
+          <>
               <Button
                 variant="contained"
                 size="large"
@@ -715,6 +692,7 @@ export default function Dashboard() {
                       onDelete={handleDelete}
                       onUpdate={handleUpdate}
                       onSaveRules={handleSaveRules}
+                      onFeedback={setTransientFeedback}
                       isUpdating={updatingId === domain.id}
                       isDeleting={deletingId === domain.id}
                       isSavingRules={rulesSavingId === domain.id}
@@ -722,8 +700,7 @@ export default function Dashboard() {
                   ))}
                 </Box>
               ) : null}
-            </>
-          )}
+          </>
         </Box>
       ) : null}
 
@@ -751,6 +728,7 @@ const DomainRow = memo(function DomainRow({
   onDelete,
   onUpdate,
   onSaveRules,
+  onFeedback,
   isUpdating,
   isDeleting,
   isSavingRules,
@@ -762,6 +740,7 @@ const DomainRow = memo(function DomainRow({
     id: number,
     payload: DomainRulesPayload,
   ) => Promise<boolean>;
+  onFeedback: (message: string, severity: "success" | "error") => void;
   isUpdating: boolean;
   isDeleting: boolean;
   isSavingRules: boolean;
@@ -774,6 +753,14 @@ const DomainRow = memo(function DomainRow({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const [showRecords, setShowRecords] = useState(false);
+  const [recordCount, setRecordCount] = useState(
+    domain.recordCount ?? 0,
+  );
+
+  useEffect(() => {
+    setRecordCount(domain.recordCount ?? 0);
+  }, [domain.recordCount]);
   const [editData, setEditData] = useState<TargetFormValue>({
     mode: domain.mode ?? "proxy",
     hostname: domain.hostname ?? "",
@@ -958,6 +945,15 @@ const DomainRow = memo(function DomainRow({
                 : `→ ${domain.hostname || "no host set"}:${domain.port ?? "?"}`}
             </Typography>
             <RuleSummary domain={domain} />
+            {recordCount > 0 ? (
+              <Typography
+                variant="caption"
+                color="textSecondary"
+                sx={{ display: "block", mt: 0.5 }}
+              >
+                {recordCount} DNS {recordCount === 1 ? "record" : "records"}
+              </Typography>
+            ) : null}
           </Box>
         </Box>
 
@@ -995,6 +991,15 @@ const DomainRow = memo(function DomainRow({
             disabled={isDeleting}
           >
             {showRules ? "Hide rules" : "Rules"}
+          </Button>
+          <Button
+            size="small"
+            variant={showRecords ? "contained" : "outlined"}
+            startIcon={<DnsRounded />}
+            onClick={() => setShowRecords((current) => !current)}
+            disabled={isDeleting}
+          >
+            {showRecords ? "Hide records" : "Records"}
           </Button>
           <Button
             size="small"
@@ -1072,6 +1077,20 @@ const DomainRow = memo(function DomainRow({
               </Stack>
             </Box>
           </CardContent>
+        </>
+      ) : null}
+
+      {showRecords ? (
+        <>
+          <Divider />
+          <Box sx={{ pt: 2.5 }}>
+            <DomainRecordsPanel
+              key={`${domain.id}-records`}
+              domain={domain}
+              onFeedback={onFeedback}
+              onCountChange={setRecordCount}
+            />
+          </Box>
         </>
       ) : null}
 
