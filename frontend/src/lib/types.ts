@@ -89,6 +89,14 @@ export interface DnsRecord {
   zone: string;
   recordMode: DnsRecordMode;
   createdAt?: string;
+  // Admin-only: the owner of the record, populated on admin list endpoints.
+  user?: {
+    id: number;
+    name: string;
+    email: string;
+    githubId: number;
+    isBanned: boolean;
+  } | null;
 }
 
 // Payload of GET /records: the user's records plus the base domains that

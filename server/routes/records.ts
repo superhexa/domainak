@@ -505,6 +505,7 @@ recordsRouter.post("/", async (c) => {
     .from(dnsRecordsTable)
     .where(
       and(
+        eq(dnsRecordsTable.zone, zone),
         eq(dnsRecordsTable.name, fqdn),
         eq(dnsRecordsTable.type, type),
         eq(dnsRecordsTable.value, value),
