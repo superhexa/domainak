@@ -1,7 +1,11 @@
 import { swaggerUI } from "@hono/swagger-ui";
+import { and, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { db } from "./db";
+import { domainDnsRecordsTable, domainTable } from "./db/schema";
 import { openApiDoc } from "./openapi";
+import { powerDns } from "./powerdns";
 import { adminRouter } from "./routes/admin";
 import { authRouter } from "./routes/auth";
 import { domainsRouter } from "./routes/domains";
@@ -53,3 +57,66 @@ console.log(
 // Keeps the UTC offsets embedded in published service-window payloads in
 // sync with daylight saving transitions.
 startSettingsRefresher();
+
+// Reconciles PowerDNS with Postgres at boot: every domain that has
+// records gets its zone created and every stored owner name
+// republished, so rows left "synced" by an earlier publishing setup
+// (or by a PowerDNS restart with an empty database) match what
+// resolves. Failures are logged and retried lazily on the next
+// write; the server never blocks on DNS.
+async function warmupDnsZones(): Promise<void> {
+  if (!powerDns.configured()) {
+    return;
+  }
+  try {
+    const names = await db
+      .select({
+        domainId: domainDnsRecordsTable.domainId,
+        name: domainDnsRecordsTable.name,
+      })
+      .from(domainDnsRecordsTable)
+      .groupBy(domainDnsRecordsTable.domainId, domainDnsRecordsTable.name);
+    if (names.length === 0) {
+      return;
+    }
+    const ids = [...new Set(names.map((row) => row.domainId))];
+    const domains = await db
+      .select({
+        id: domainTable.id,
+        subdomain: domainTable.subdomain,
+      })
+      .from(domainTable)
+      .where(inArray(domainTable.id, ids));
+    for (const domain of domains) {
+      await powerDns.ensureZone(domain.subdomain);
+      const domainNames = names.filter(
+        (row) => row.domainId === domain.id,
+      );
+      for (const entry of domainNames) {
+        const rows = await db
+          .select()
+          .from(domainDnsRecordsTable)
+          .where(
+            and(
+              eq(domainDnsRecordsTable.domainId, domain.id),
+              eq(domainDnsRecordsTable.name, entry.name),
+            ),
+          );
+        await powerDns.publishName(
+          domain.subdomain,
+          entry.name,
+          rows.map((row) => ({
+            type: row.type,
+            value: row.value,
+            ttl: row.ttl,
+          })),
+        );
+      }
+      console.log(`DNS zone ready: ${domain.subdomain}`);
+    }
+  } catch (error) {
+    console.error("Failed to warm up DNS zones:", error);
+  }
+}
+
+void warmupDnsZones();
