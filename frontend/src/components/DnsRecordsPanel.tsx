@@ -1,6 +1,5 @@
 import {
   AddRounded,
-  CloudRounded,
   CloseRounded,
   DeleteOutlineRounded,
   DnsRounded,
@@ -24,13 +23,11 @@ import {
   Tooltip,
   Typography,
   alpha,
-  useTheme,
 } from "@mui/material";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import type {
   DnsRecord,
-  DnsRecordMode,
   DnsRecordType,
   RecordDomain,
   RecordsResponse,
@@ -78,7 +75,6 @@ interface FormState {
   type: DnsRecordType;
   value: string;
   ttl: string;
-  mode: DnsRecordMode;
 }
 
 const EMPTY_FORM: FormState = {
@@ -87,93 +83,10 @@ const EMPTY_FORM: FormState = {
   type: "A",
   value: "",
   ttl: "300",
-  mode: "dns-only",
 };
 
 interface DnsRecordsPanelProps {
   onFeedback: (message: string, severity: "success" | "error") => void;
-}
-
-// Cloudflare-style mode picker: two cards, one selected. TXT records can
-// only be DNS-only, so the proxied card is disabled for them.
-function ModeOption({
-  mode,
-  selected,
-  disabled,
-  onSelect,
-}: {
-  mode: DnsRecordMode;
-  selected: boolean;
-  disabled?: boolean;
-  onSelect: (mode: DnsRecordMode) => void;
-}) {
-  const theme = useTheme();
-  const proxied = mode === "proxied";
-
-  return (
-    <Paper
-      component="button"
-      type="button"
-      variant="outlined"
-      onClick={() => {
-        if (!disabled) {
-          onSelect(mode);
-        }
-      }}
-      disabled={disabled}
-      sx={{
-        p: 1.5,
-        borderRadius: 3,
-        cursor: disabled ? "default" : "pointer",
-        textAlign: "left",
-        display: "flex",
-        gap: 1.5,
-        alignItems: "flex-start",
-        borderColor: selected
-          ? proxied
-            ? theme.palette.warning.main
-            : "primary.main"
-          : "divider",
-        bgcolor: selected
-          ? alpha(
-              proxied
-                ? theme.palette.warning.main
-                : theme.palette.primary.main,
-              0.1,
-            )
-          : "transparent",
-        opacity: disabled ? 0.5 : 1,
-        transition: "border-color 120ms ease, background-color 120ms ease",
-        "&:hover:not(:disabled)": {
-          borderColor: selected
-            ? undefined
-            : proxied
-              ? theme.palette.warning.main
-              : "primary.main",
-        },
-      }}
-    >
-      <Box
-        sx={{
-          mt: 0.25,
-          display: "flex",
-          color: proxied ? "warning.main" : "primary.main",
-        }}
-      >
-        {proxied ? <CloudRounded fontSize="small" /> : <DnsRounded fontSize="small" />}
-      </Box>
-      <Box sx={{ minWidth: 0 }}>
-        <Typography variant="body2" sx={{ fontWeight: 700 }}>
-          {proxied ? "Proxied" : "DNS only"}
-        </Typography>
-        <Typography variant="caption" color="textSecondary">
-          {proxied
-            ? "Cloudflare hides the origin IP and proxies the traffic."
-            : "Answers with your real value straight from our nameservers."}
-        </Typography>
-      </Box>
-    </Paper>
-  );
 }
 
 export function DnsRecordsPanel({ onFeedback }: DnsRecordsPanelProps) {
@@ -221,9 +134,6 @@ export function DnsRecordsPanel({ onFeedback }: DnsRecordsPanelProps) {
     (item) => item.domain === form.base,
   );
   const valueHint = VALUE_HINTS[form.type];
-  const proxiedCount = records.filter(
-    (record) => record.recordMode === "proxied",
-  ).length;
 
   const handleSubmit = useCallback(
     async (event: FormEvent) => {
@@ -253,7 +163,7 @@ export function DnsRecordsPanel({ onFeedback }: DnsRecordsPanelProps) {
           type: form.type,
           value,
           ttl: Number(form.ttl) || 300,
-          mode: form.type === "TXT" ? "dns-only" : form.mode,
+          mode: "dns-only",
         });
         setForm({ ...EMPTY_FORM, base: form.base });
         setShowForm(false);
@@ -346,8 +256,8 @@ export function DnsRecordsPanel({ onFeedback }: DnsRecordsPanelProps) {
                 sx={{ mt: 0.5, maxWidth: 640 }}
               >
                 A, AAAA, CNAME and TXT records with no quota. Every record is
-                DNS-only by default; flip it to Proxied to hide the origin
-                behind Cloudflare, exactly like the orange cloud.
+                DNS-only, served by your own nameservers and resolved through
+                the tunnel with HTTPS.
               </Typography>
             </Box>
 
@@ -361,12 +271,6 @@ export function DnsRecordsPanel({ onFeedback }: DnsRecordsPanelProps) {
                 size="small"
                 variant="outlined"
                 label={`${records.length} ${records.length === 1 ? "record" : "records"}`}
-              />
-              <Chip
-                size="small"
-                variant="outlined"
-                color={proxiedCount > 0 ? "warning" : "default"}
-                label={`${proxiedCount} proxied`}
               />
               <Chip
                 size="small"
@@ -474,8 +378,6 @@ export function DnsRecordsPanel({ onFeedback }: DnsRecordsPanelProps) {
                     ...form,
                     type: event.target.value as DnsRecordType,
                     value: "",
-                    mode:
-                      event.target.value === "TXT" ? "dns-only" : form.mode,
                   })
                 }
                 fullWidth
@@ -529,46 +431,6 @@ export function DnsRecordsPanel({ onFeedback }: DnsRecordsPanelProps) {
                 helperText="60–86400, default 300."
                 slotProps={{ htmlInput: { min: 60, max: 86400 } }}
               />
-            </Box>
-
-            <Box>
-              <Typography
-                variant="overline"
-                color="textSecondary"
-                sx={{ display: "block", mb: 1 }}
-              >
-                Proxy status
-              </Typography>
-              <Box
-                sx={{
-                  display: "grid",
-                  gap: 1.5,
-                  gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
-                }}
-              >
-                <ModeOption
-                  mode="dns-only"
-                  selected={
-                    form.type === "TXT" || form.mode === "dns-only"
-                  }
-                  onSelect={(mode) => setForm({ ...form, mode })}
-                />
-                <ModeOption
-                  mode="proxied"
-                  selected={form.type !== "TXT" && form.mode === "proxied"}
-                  disabled={form.type === "TXT"}
-                  onSelect={(mode) => setForm({ ...form, mode })}
-                />
-              </Box>
-              {form.type === "TXT" ? (
-                <Typography
-                  variant="caption"
-                  color="textSecondary"
-                  sx={{ display: "block", mt: 0.75 }}
-                >
-                  TXT records cannot be proxied.
-                </Typography>
-              ) : null}
             </Box>
 
             <Stack
@@ -723,26 +585,6 @@ export function DnsRecordsPanel({ onFeedback }: DnsRecordsPanelProps) {
                   >
                     {record.ttl}s
                   </Typography>
-                  <Chip
-                    size="small"
-                    icon={
-                      record.recordMode === "proxied" ? (
-                        <CloudRounded />
-                      ) : (
-                        <DnsRounded />
-                      )
-                    }
-                    label={
-                      record.recordMode === "proxied"
-                        ? "Proxied"
-                        : "DNS only"
-                    }
-                    color={
-                      record.recordMode === "proxied" ? "warning" : "default"
-                    }
-                    variant={record.recordMode === "proxied" ? "filled" : "outlined"}
-                    sx={{ fontFamily: FONT_MONO, minWidth: 108 }}
-                  />
                   <Tooltip title="Delete record">
                     <IconButton
                       size="small"
