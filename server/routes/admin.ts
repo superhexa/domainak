@@ -241,7 +241,7 @@ adminRouter.post("/banned-domains", async (c) => {
   }
 
   try {
-    // Published DNS records are removed from Cloudflare first; the
+    // The domain's PowerDNS zone is removed first; the
     // domain row delete below then cascades to the record rows.
     const banned = await db
       .select({ id: domainTable.id })
@@ -336,4 +336,3 @@ adminRouter.delete("/ips/:id", async (c) => {
   await db.delete(bannedIpsTable).where(eq(bannedIpsTable.id, id));
   return c.json({ success: true });
 });
-

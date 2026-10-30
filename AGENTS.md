@@ -19,7 +19,10 @@ Practical guide for agentic coding assistants working in `domainak`.
 - `.github/workflows/` - deployment workflows
 - `docker-compose.yaml` - container stack
 - `nginx.conf` - OpenResty routing config
-- `server/cloudflare.ts` - Cloudflare API client: publishes each domain's DNS records into its base domain's zone (needs `CLOUDFLARE_API_TOKEN`)
+- `server/powerdns.ts` - PowerDNS API client: per-domain zones, rrset
+  rebuilds, wire encoding, delegation checks (needs `PDNS_API_URL` /
+  `PDNS_API_KEY`, nameservers from `DNS_NAMESERVERS`)
+- `pdns.conf` - PowerDNS settings mounted into the `pdns` service
 - `unregistered.lua` - Lua init file for OpenResty (unregistered-host and banned-host page templates, red accent for banned); mounted/downloaded alongside `nginx.conf` because inline `_by_lua_block` code is limited by nginx's 8 KB config buffer
 - `setup.sh` - guided install/update script
 
@@ -62,7 +65,9 @@ Notes:
 - Full suite: `bun test` (Bun's built-in runner, no extra framework).
 - Single file: `bun test server/dns-validation.test.ts`.
 - Single test by name: `bun test -t "MX"`.
-- No database, Redis or network is needed: the tests cover pure DNS validation and the Cloudflare client with a stubbed `fetch`.
+- No database, Redis or real DNS server is needed: the tests cover
+  pure DNS validation and the PowerDNS client with a stubbed `fetch`
+  plus an in-process mock PowerDNS HTTP server.
 - Verification also means linting, building, and manual API/UI checks.
 - Never run automated browser tests in this project: no Playwright, no browser automation tools, no automated screenshots of the UI. Verify UI work with lint/build plus manual inspection by the user.
 
@@ -78,6 +83,7 @@ docker compose ps
 docker compose logs backend --tail=200
 docker compose logs openresty --tail=200
 docker compose logs cloudflared --tail=200
+docker compose logs pdns --tail=200
 ```
 
 ## Formatting Rules
@@ -144,7 +150,7 @@ Frontend `eslint.config.js` additionally enforces:
 - Middleware returns JSON errors instead of throwing framework exceptions.## Config and Deployment
 
 - Backend env handling is centralized in `server/config.ts`.
-- DNS records belong to a registered domain (`domain_dns_record`, FK cascade on domain delete) and are published by `CLOUDFLARE_API_TOKEN` into the base domain's Cloudflare zone as DNS-only records; without the token they stay saved with syncStatus `pending`.
+- DNS records belong to a registered domain (`domain_dns_record`, FK cascade on domain delete) and are published by the PowerDNS client into that domain's own zone; without a reachable PowerDNS they stay saved with syncStatus `pending`/`failed`. Deleting or banning a domain deletes its PowerDNS zone. At boot the backend re-creates zones and republishes stored names (warmup in `server/index.ts`).
 - Frontend API base URL comes from `import.meta.env.VITE_API_URL`, which deployment currently feeds from `BACKEND_URL` during the frontend image build.
 - `docker-compose.yaml` builds local backend/frontend images and tags them with the GHCR image names.
 - `setup.sh` writes deployment env vars into `~/.domainak/.env`.

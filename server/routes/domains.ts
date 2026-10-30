@@ -443,7 +443,7 @@ domainsRouter.delete("/:id", async (c) => {
   if (domain[0]?.userId !== user.id)
     return c.json({ error: "Forbidden" }, 403);
 
-  // Published DNS records are removed from Cloudflare first; the
+  // The domain's PowerDNS zone is removed first; the
   // domain row delete then cascades to the remaining record rows.
   await removeDomainDnsRecords(id);
   await db.delete(domainTable).where(eq(domainTable.id, id));

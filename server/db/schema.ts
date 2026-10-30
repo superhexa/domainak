@@ -108,10 +108,11 @@ export const bannedIpsTable = pgTable(
 // name lives under the domain itself: for the domain
 // `app.example.com`, "@" is app.example.com, "www" is
 // www.app.example.com and "_acme-challenge" is the ACME challenge
-// name. Records are published as ordinary DNS records in the base
-// domain's Cloudflare zone (see routes/domain-records.ts); Postgres is
-// the source of truth and `syncStatus` reports whether the published
-// copy matches the row. Deleting the domain deletes its records.
+// name. Records are published in the domain's own zone in the
+// project's PowerDNS server (see routes/domain-records.ts); Postgres
+// is the source of truth and `syncStatus` reports whether the
+// published copy matches the row. Deleting the domain deletes its
+// records.
 export const domainDnsRecordsTable = pgTable(
   "domain_dns_record",
   {
@@ -132,11 +133,8 @@ export const domainDnsRecordsTable = pgTable(
     value: text("value").notNull(),
     ttl: integer("ttl").default(300).notNull(),
     comment: varchar("comment", { length: 255 }),
-    // Cloudflare record id once published; null until the first
-    // successful publish.
-    cloudflareId: varchar("cloudflare_id", { length: 64 }),
     // "synced" (published copy matches), "pending" (never published,
-    // for example no Cloudflare token configured), "failed" (the
+    // for example PowerDNS not configured), "failed" (the
     // last publish attempt errored; see syncError).
     syncStatus: varchar("sync_status", { length: 16 })
       .default("pending")

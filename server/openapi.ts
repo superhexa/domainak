@@ -31,7 +31,7 @@ export const openApiDoc: OpenAPIV3.Document = {
     {
       name: "Domain Records",
       description:
-        "DNS records for one registered domain, managed from its settings and published in the base domain's Cloudflare zone",
+        "DNS records for one registered domain, managed from its settings and published in the domain's own zone in the project's PowerDNS server",
     },
     { name: "Stats", description: "Domain visitor statistics" },
     { name: "Admin", description: "Admin-only moderation endpoints" },
@@ -470,6 +470,14 @@ export const openApiDoc: OpenAPIV3.Document = {
             required: true,
             schema: { type: "integer" },
           },
+          {
+            name: "refreshDelegation",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["1"] },
+            description:
+              "Set to 1 to skip the cached delegation check and query public DNS again.",
+          },
         ],
         responses: {
           "200": {
@@ -484,6 +492,24 @@ export const openApiDoc: OpenAPIV3.Document = {
                       example: "myapp.domainak.com",
                     },
                     dnsConfigured: { type: "boolean" },
+                    nameservers: {
+                      type: "array",
+                      items: { type: "string" },
+                      example: ["ns1.example.com", "ns2.example.com"],
+                    },
+                    delegation: {
+                      type: "object",
+                      properties: {
+                        status: {
+                          type: "string",
+                          enum: ["delegated", "pending", "unknown"],
+                        },
+                        checkedAt: {
+                          type: "string",
+                          format: "date-time",
+                        },
+                      },
+                    },
                     records: {
                       type: "array",
                       items: {
@@ -546,7 +572,7 @@ export const openApiDoc: OpenAPIV3.Document = {
         tags: ["Domain Records"],
         summary: "Create a DNS record for a domain",
         description:
-          "Validates the record, saves it, and publishes it in the base domain's Cloudflare zone. When publishing is not configured or Cloudflare errors, the record is still saved with syncStatus pending/failed and can be retried.",
+          "Validates the record, saves it, and publishes it in the domain's PowerDNS zone. When PowerDNS is not configured or errors, the record is still saved with syncStatus pending/failed and can be retried. Records only resolve publicly once the domain is delegated to the server's nameservers.",
         security: [{ BearerAuth: [] }],
         parameters: [
           {
@@ -666,7 +692,7 @@ export const openApiDoc: OpenAPIV3.Document = {
         tags: ["Domain Records"],
         summary: "Delete a DNS record",
         description:
-          "Removes the record from Cloudflare when it was published, then deletes the row.",
+          "Rebuilds the record's owner name in PowerDNS without the record, then deletes the row.",
         security: [{ BearerAuth: [] }],
         parameters: [
           {

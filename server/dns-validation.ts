@@ -2,7 +2,7 @@ import { isIP } from "node:net";
 
 // Pure DNS-record validation shared by the per-domain records routes.
 // Nothing in this file touches the database or the network, so it can be
-// unit-tested without Postgres, Redis or a Cloudflare token.
+// unit-tested without Postgres, Redis or PowerDNS.
 
 export const DNS_RECORD_TYPES = [
   "A",

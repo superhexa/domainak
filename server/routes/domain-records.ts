@@ -1,11 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
 import type { Context } from "hono";
-import {
-  CfError,
-  cloudflareConfigured,
-  removeCloudflareRecord,
-  upsertCloudflareRecord,
-} from "../cloudflare";
 import { db } from "../db";
 import {
   bannedDomainsTable,
@@ -22,22 +16,30 @@ import {
   validateRecordValue,
   validateTtl,
 } from "../dns-validation";
+import {
+  type DelegationCheck,
+  type DnsRowInput,
+  PdnsError,
+  powerDns,
+} from "../powerdns";
 
 // DNS records for one registered domain, managed from that domain's
 // settings. Records live under the domain itself (@ is the domain,
-// "www" is www.<domain>) and are published as ordinary DNS records in
-// the base domain's Cloudflare zone. Postgres is the source of truth:
-// a record is always saved, and syncStatus reports whether Cloudflare
-// holds the same copy, so a missing token or a Cloudflare outage never
-// silently loses a record — it stays "pending"/"failed" with a Retry.
+// "www" is www.<domain>) and are published in the domain's own
+// authoritative zone in the project's PowerDNS server. Postgres is
+// the source of truth: a record is always saved, and syncStatus
+// reports whether PowerDNS holds the same copy, so a missing or
+// unreachable PowerDNS never silently loses a record — it stays
+// "pending"/"failed" with a Retry. The zone only resolves publicly
+// once the domain is delegated to this server's nameservers (see the
+// delegation info returned by the list endpoint).
 
 type RecordRow = typeof domainDnsRecordsTable.$inferSelect;
 
-type PublicRecord = Omit<RecordRow, "cloudflareId">;
+type PublicRecord = RecordRow;
 
 function toPublicRecord(row: RecordRow): PublicRecord {
-  const { cloudflareId: _cloudflareId, ...rest } = row;
-  return rest;
+  return { ...row };
 }
 
 type DomainRow = typeof domainTable.$inferSelect;
@@ -123,6 +125,17 @@ async function parseRecordInput(
     return { error: valueResult.error };
   }
 
+  // An NS record at the apex would replace the zone's own nameserver
+  // set in PowerDNS. Delegate a subdomain name instead.
+  if (type === "NS" && nameResult.value.fqdn === domain.subdomain) {
+    return {
+      error:
+        "NS records cannot be set at the domain apex: the zone's " +
+        "nameservers already live there. Use a subdomain name to " +
+        "delegate it.",
+    };
+  }
+
   const comment = String(body.comment ?? "").trim();
   if (comment.length > 255) {
     return { error: "Comment must be at most 255 characters" };
@@ -138,7 +151,7 @@ async function parseRecordInput(
 }
 
 function syncErrorMessage(error: unknown): string {
-  if (error instanceof CfError) {
+  if (error instanceof PdnsError) {
     return error.message;
   }
   if (error instanceof Error) {
@@ -147,33 +160,32 @@ function syncErrorMessage(error: unknown): string {
   return "Failed to publish the record";
 }
 
-// Publishes one row's values and returns the Cloudflare record id, or
-// null when publishing is not configured. Throws on Cloudflare errors.
-async function publishRecord(
-  record: Pick<
-    RecordRow,
-    "name" | "type" | "value" | "ttl" | "comment" | "cloudflareId"
-  >,
-): Promise<string | null> {
-  if (!cloudflareConfigured()) {
-    return null;
+function toRowInput(row: {
+  type: string;
+  value: string;
+  ttl: number;
+}): DnsRowInput {
+  return { type: row.type, value: row.value, ttl: row.ttl };
+}
+
+// Publishes one owner name's full row set to PowerDNS. Throws on
+// PowerDNS errors; returns false when publishing is not configured.
+async function publishNameRows(
+  zone: string,
+  fqdn: string,
+  rows: DnsRowInput[],
+): Promise<boolean> {
+  if (!powerDns.configured()) {
+    return false;
   }
-  return upsertCloudflareRecord(
-    {
-      type: record.type,
-      name: record.name,
-      content: record.value,
-      ttl: record.ttl,
-      comment: record.comment,
-    },
-    record.cloudflareId,
-  );
+  await powerDns.publishName(zone, fqdn, rows);
+  return true;
 }
 
 async function markPublishState(
   id: number,
   outcome:
-    | { status: "synced"; cloudflareId: string | null }
+    | { status: "synced" }
     | { status: "pending" | "failed"; error: string },
 ): Promise<RecordRow | undefined> {
   const updated = await db
@@ -182,7 +194,6 @@ async function markPublishState(
       outcome.status === "synced"
         ? {
             syncStatus: "synced",
-            cloudflareId: outcome.cloudflareId,
             syncError: null,
           }
         : {
@@ -197,9 +208,9 @@ async function markPublishState(
 
 function notConfiguredError(): string {
   return (
-    "Not published: CLOUDFLARE_API_TOKEN is not configured " +
+    "Not published: PowerDNS is not configured " +
     "on the server. The record is saved and will publish " +
-    "once the token is set."
+    "once PowerDNS is configured."
   );
 }
 
@@ -213,6 +224,10 @@ export async function listDomainRecords(c: Context) {
     return c.json({ error: "Domain not found" }, 404);
   }
 
+  const forceCheck = c.req.query("refreshDelegation") === "1";
+  const delegationPromise: Promise<DelegationCheck> =
+    powerDns.checkDelegation(domain.subdomain, { force: forceCheck });
+
   const rows = await db
     .select()
     .from(domainDnsRecordsTable)
@@ -222,10 +237,13 @@ export async function listDomainRecords(c: Context) {
       asc(domainDnsRecordsTable.type),
       asc(domainDnsRecordsTable.id),
     );
+  const delegation = await delegationPromise;
 
   return c.json({
     domain: domain.subdomain,
-    dnsConfigured: cloudflareConfigured(),
+    dnsConfigured: powerDns.configured(),
+    nameservers: powerDns.nameservers(),
+    delegation,
     records: rows.map(toPublicRecord),
   });
 }
@@ -295,7 +313,7 @@ export async function createDomainRecord(c: Context) {
     return c.json({ error: "Failed to create record" }, 500);
   }
 
-  if (!cloudflareConfigured()) {
+  if (!powerDns.configured()) {
     const saved = await markPublishState(record.id, {
       status: "pending",
       error: notConfiguredError(),
@@ -304,10 +322,12 @@ export async function createDomainRecord(c: Context) {
   }
 
   try {
-    const cloudflareId = await publishRecord(record);
+    await publishNameRows(domain.subdomain, parsed.fqdn, [
+      ...siblings.map(toRowInput),
+      toRowInput(record),
+    ]);
     const saved = await markPublishState(record.id, {
       status: "synced",
-      cloudflareId,
     });
     return c.json({ record: toPublicRecord(saved ?? record) }, 201);
   } catch (error) {
@@ -390,21 +410,48 @@ export async function updateDomainRecord(c: Context) {
     existing.ttl === parsed.ttl &&
     (existing.comment ?? null) === parsed.comment;
 
-  // Publish the new values first: if Cloudflare rejects them, the
+  // Publish the new values first: if PowerDNS rejects them, the
   // stored row keeps describing what actually resolves.
   if (!unchanged) {
-    if (!cloudflareConfigured()) {
+    if (!powerDns.configured()) {
       return c.json({ error: notConfiguredError() }, 503);
     }
     try {
-      const cloudflareId = await publishRecord({
-        ...existing,
-        name: parsed.fqdn,
-        type: parsed.type,
-        value: parsed.value,
-        ttl: parsed.ttl,
-        comment: parsed.comment,
-      });
+      // A renamed record leaves its old owner name behind: rebuild
+      // that name too, or its stale rrsets keep resolving.
+      if (parsed.fqdn !== existing.name) {
+        const oldSiblings = await db
+          .select()
+          .from(domainDnsRecordsTable)
+          .where(
+            and(
+              eq(domainDnsRecordsTable.domainId, id),
+              eq(domainDnsRecordsTable.name, existing.name),
+            ),
+          );
+        await publishNameRows(
+          domain.subdomain,
+          existing.name,
+          oldSiblings.filter((row) => row.id !== recordId).map(toRowInput),
+        );
+      }
+      const newNameRows = siblings.map((row) =>
+        row.id === recordId
+          ? {
+              type: parsed.type,
+              value: parsed.value,
+              ttl: parsed.ttl,
+            }
+          : toRowInput(row),
+      );
+      if (!siblings.some((row) => row.id === recordId)) {
+        newNameRows.push({
+          type: parsed.type,
+          value: parsed.value,
+          ttl: parsed.ttl,
+        });
+      }
+      await publishNameRows(domain.subdomain, parsed.fqdn, newNameRows);
       const updated = await db
         .update(domainDnsRecordsTable)
         .set({
@@ -414,7 +461,6 @@ export async function updateDomainRecord(c: Context) {
           ttl: parsed.ttl,
           comment: parsed.comment,
           syncStatus: "synced",
-          cloudflareId,
           syncError: null,
         })
         .where(eq(domainDnsRecordsTable.id, recordId))
@@ -430,14 +476,17 @@ export async function updateDomainRecord(c: Context) {
   }
 
   // Nothing changed except possibly a retry of a failed publish.
-  if (existing.syncStatus !== "synced" && cloudflareConfigured()) {
+  if (existing.syncStatus !== "synced" && powerDns.configured()) {
     try {
-      const cloudflareId = await publishRecord(existing);
+      await publishNameRows(
+        domain.subdomain,
+        parsed.fqdn,
+        siblings.map(toRowInput),
+      );
       const updated = await db
         .update(domainDnsRecordsTable)
         .set({
           syncStatus: "synced",
-          cloudflareId,
           syncError: null,
         })
         .where(eq(domainDnsRecordsTable.id, recordId))
@@ -479,15 +528,29 @@ export async function deleteDomainRecord(c: Context) {
     return c.json({ error: "Record not found" }, 404);
   }
 
-  // Only a record that was actually published needs unpublishing; a
-  // pending/failed row never reached Cloudflare.
-  if (record.cloudflareId || record.syncStatus === "synced") {
+  // Only a name with published rows needs rebuilding: a
+  // pending/failed row that is alone at its name never reached
+  // PowerDNS, so deleting it needs no DNS call.
+  const siblings = await db
+    .select()
+    .from(domainDnsRecordsTable)
+    .where(
+      and(
+        eq(domainDnsRecordsTable.domainId, id),
+        eq(domainDnsRecordsTable.name, record.name),
+      ),
+    );
+  const needsRebuild =
+    record.syncStatus === "synced" ||
+    siblings.some(
+      (row) => row.id !== recordId && row.syncStatus === "synced",
+    );
+  if (needsRebuild && powerDns.configured()) {
     try {
-      await removeCloudflareRecord(
+      await publishNameRows(
+        domain.subdomain,
         record.name,
-        record.type,
-        record.cloudflareId,
-        record.value,
+        siblings.filter((row) => row.id !== recordId).map(toRowInput),
       );
     } catch (error) {
       return c.json({ error: syncErrorMessage(error) }, 500);
@@ -525,7 +588,7 @@ export async function retryDomainRecord(c: Context) {
     return c.json({ error: "Record not found" }, 404);
   }
 
-  if (!cloudflareConfigured()) {
+  if (!powerDns.configured()) {
     const saved = await markPublishState(record.id, {
       status: "pending",
       error: notConfiguredError(),
@@ -534,10 +597,22 @@ export async function retryDomainRecord(c: Context) {
   }
 
   try {
-    const cloudflareId = await publishRecord(record);
+    const siblings = await db
+      .select()
+      .from(domainDnsRecordsTable)
+      .where(
+        and(
+          eq(domainDnsRecordsTable.domainId, id),
+          eq(domainDnsRecordsTable.name, record.name),
+        ),
+      );
+    await publishNameRows(
+      domain.subdomain,
+      record.name,
+      siblings.map(toRowInput),
+    );
     const saved = await markPublishState(record.id, {
       status: "synced",
-      cloudflareId,
     });
     return c.json({ record: toPublicRecord(saved ?? record) });
   } catch (error) {
@@ -549,31 +624,24 @@ export async function retryDomainRecord(c: Context) {
   }
 }
 
-// Removes every published record of a domain from Cloudflare and then
-// its rows, best-effort: a Cloudflare failure is logged, never thrown,
-// so deleting or banning a domain can never be blocked by DNS cleanup.
+// Removes a domain's whole PowerDNS zone and then its rows,
+// best-effort: a PowerDNS failure is logged, never thrown, so
+// deleting or banning a domain can never be blocked by DNS cleanup.
 // Callers still delete the domain row itself afterwards.
 export async function removeDomainDnsRecords(
   domainId: number,
 ): Promise<void> {
-  const rows = await db
-    .select()
-    .from(domainDnsRecordsTable)
-    .where(eq(domainDnsRecordsTable.domainId, domainId));
-  for (const row of rows) {
-    if (!row.cloudflareId && row.syncStatus !== "synced") {
-      continue;
-    }
+  const found = await db
+    .select({ subdomain: domainTable.subdomain })
+    .from(domainTable)
+    .where(eq(domainTable.id, domainId));
+  const domain = found[0];
+  if (domain && powerDns.configured()) {
     try {
-      await removeCloudflareRecord(
-        row.name,
-        row.type,
-        row.cloudflareId,
-        row.value,
-      );
+      await powerDns.deleteZone(domain.subdomain);
     } catch (error) {
       console.error(
-        `Failed to remove DNS record ${row.name} ${row.type}:`,
+        `Failed to remove DNS zone ${domain.subdomain}:`,
         error,
       );
     }
