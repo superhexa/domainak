@@ -64,10 +64,12 @@ export interface Domain {
 
 // DNS records for one registered domain. Records live under the domain
 // itself (@ is the domain, "www" is www.<domain>) and are published in
-// the base domain's Cloudflare zone. syncStatus reports whether the
-// published copy matches the row: "synced", "pending" (never published,
-// for example no Cloudflare token configured) or "failed" (the last
-// publish attempt errored; see syncError and retry).
+// the domain's own zone in the project's PowerDNS server. syncStatus
+// reports whether the published copy matches the row: "synced",
+// "pending" (never published, for example PowerDNS not configured)
+// or "failed" (the last publish attempt errored; see syncError and
+// retry). Records only resolve publicly once the domain is delegated
+// to the nameservers in DomainRecordsResponse.delegation.
 export type DnsRecordType =
   | "A"
   | "AAAA"
@@ -106,10 +108,19 @@ export interface DomainDnsRecord {
   updatedAt?: string;
 }
 
+export type DnsDelegationStatus = "delegated" | "pending" | "unknown";
+
+export interface DnsDelegationInfo {
+  status: DnsDelegationStatus;
+  checkedAt: string;
+}
+
 // Payload of GET /domains/:id/records.
 export interface DomainRecordsResponse {
   domain: string;
   dnsConfigured: boolean;
+  nameservers: string[];
+  delegation: DnsDelegationInfo;
   records: DomainDnsRecord[];
 }
 

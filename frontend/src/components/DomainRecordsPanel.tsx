@@ -46,6 +46,7 @@ import {
   relativeName,
 } from "../lib/dns-records";
 import type {
+  DnsDelegationInfo,
   DnsRecordType,
   DnsSyncStatus,
   Domain,
@@ -62,6 +63,15 @@ const SYNC_META: Record<
   synced: { label: "Published", color: "success" },
   pending: { label: "Not published", color: "warning" },
   failed: { label: "Publish failed", color: "error" },
+};
+
+const DELEGATION_META: Record<
+  DnsDelegationInfo["status"],
+  { label: string; color: "success" | "warning" | "default" }
+> = {
+  delegated: { label: "Delegated", color: "success" },
+  pending: { label: "Not delegated", color: "warning" },
+  unknown: { label: "Couldn't check", color: "default" },
 };
 
 interface FormState {
@@ -108,6 +118,11 @@ export function DomainRecordsPanel({
 }: DomainRecordsPanelProps) {
   const [records, setRecords] = useState<DomainDnsRecord[]>([]);
   const [dnsConfigured, setDnsConfigured] = useState(true);
+  const [nameservers, setNameservers] = useState<string[]>([]);
+  const [delegation, setDelegation] =
+    useState<DnsDelegationInfo | null>(null);
+  const [isCheckingDelegation, setIsCheckingDelegation] =
+    useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
@@ -126,11 +141,11 @@ export function DomainRecordsPanel({
   const formRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(
-    async (signal?: AbortSignal) => {
+    async (signal?: AbortSignal, forceDelegation = false) => {
       try {
         const { data } =
           await api.get<DomainRecordsResponse>(
-            `/domains/${domain.id}/records`,
+            `/domains/${domain.id}/records${forceDelegation ? "?refreshDelegation=1" : ""}`,
             { signal },
           );
         if (signal?.aborted) {
@@ -138,6 +153,8 @@ export function DomainRecordsPanel({
         }
         setRecords(data.records);
         setDnsConfigured(data.dnsConfigured);
+        setNameservers(data.nameservers ?? []);
+        setDelegation(data.delegation ?? null);
         setLoadError("");
         onCountChange?.(data.records.length);
       } catch (error) {
@@ -343,6 +360,15 @@ export function DomainRecordsPanel({
     [onFeedback],
   );
 
+  const handleCheckDelegation = useCallback(async () => {
+    setIsCheckingDelegation(true);
+    try {
+      await load(undefined, true);
+    } finally {
+      setIsCheckingDelegation(false);
+    }
+  }, [load]);
+
   const meta = TYPE_META[form.type];
   const fqdnPreview = previewFqdn(form.name, domain.subdomain);
   const isApex = form.name.trim() === "" || form.name.trim() === "@";
@@ -446,10 +472,107 @@ export function DomainRecordsPanel({
 
       {!dnsConfigured && !isLoading ? (
         <Alert severity="info" variant="outlined" sx={{ mb: 2 }}>
-          DNS publishing is not configured on this server: no Cloudflare
-          API token is set. Records are saved here and will publish once
-          the token is configured — use Retry on a record afterwards.
+          DNS publishing is not configured on this server: PowerDNS
+          is not reachable. Records are saved here and will publish
+          once PowerDNS is configured — use Retry on a record
+          afterwards.
         </Alert>
+      ) : null}
+
+      {!isLoading && delegation ? (
+        <Paper
+          variant="outlined"
+          sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 3, mb: 2 }}
+        >
+          <Stack
+            direction="row"
+            spacing={1}
+            useFlexGap
+            sx={{
+              flexWrap: "wrap",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              DNS delegation
+            </Typography>
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{ alignItems: "center" }}
+            >
+              <Chip
+                size="small"
+                label={DELEGATION_META[delegation.status].label}
+                color={DELEGATION_META[delegation.status].color}
+              />
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<RefreshRounded />}
+                onClick={() => void handleCheckDelegation()}
+                disabled={isCheckingDelegation}
+              >
+                {isCheckingDelegation ? "Checking…" : "Check again"}
+              </Button>
+            </Stack>
+          </Stack>
+          <Typography
+            variant="body2"
+            color="textSecondary"
+            sx={{ mt: 1, maxWidth: 640 }}
+          >
+            Records publish to this server&apos;s own DNS system. For
+            them to resolve publicly, delegate {domain.subdomain} to
+            these nameservers with NS records in its parent zone. The
+            nameservers also need A (glue) records pointing at this
+            server&apos;s public IP.
+          </Typography>
+          {nameservers.length > 0 ? (
+            <Stack spacing={1} sx={{ mt: 1.5 }}>
+              {nameservers.map((nameserver) => {
+                const nsRecord =
+                  `${domain.subdomain}  NS  ${nameserver}`;
+                return (
+                  <Stack
+                    key={nameserver}
+                    direction="row"
+                    spacing={1}
+                    sx={{ minWidth: 0, alignItems: "center" }}
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontFamily: FONT_MONO,
+                        overflowWrap: "anywhere",
+                        flex: 1,
+                        minWidth: 0,
+                      }}
+                    >
+                      {nsRecord}
+                    </Typography>
+                    <Tooltip title="Copy NS record">
+                      <IconButton
+                        size="small"
+                        aria-label={`Copy NS record for ${nameserver}`}
+                        onClick={() =>
+                          void handleCopy(nsRecord, "NS record")
+                        }
+                      >
+                        <ContentCopyRounded fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </Stack>
+                );
+              })}
+            </Stack>
+          ) : (
+            <Typography variant="body2" sx={{ mt: 1 }}>
+              No DNS nameservers are configured on this server yet.
+            </Typography>
+          )}
+        </Paper>
       ) : null}
 
       <Collapse in={showForm} unmountOnExit>
@@ -567,7 +690,7 @@ export function DomainRecordsPanel({
                 onChange={(event) =>
                   setForm({ ...form, comment: event.target.value })
                 }
-                helperText="Shown only in this dashboard and in Cloudflare."
+                helperText="Shown only in this dashboard."
                 slotProps={{
                   htmlInput: { maxLength: 255, dir: "auto" },
                 }}
