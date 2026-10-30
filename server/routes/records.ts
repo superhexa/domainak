@@ -488,16 +488,6 @@ recordsRouter.post("/", async (c) => {
         400,
       );
     }
-    const hasCname = existing.some((row) => row.type === "CNAME");
-    if (hasCname || type === "CNAME") {
-      return c.json(
-        {
-          error:
-            "A CNAME cannot share a name with other record types. Remove the other records first.",
-        },
-        400,
-      );
-    }
   }
 
   const duplicate = await db
