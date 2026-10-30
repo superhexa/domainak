@@ -1,21 +1,13 @@
-import {
-  CLOUDFLARE_API_TOKEN,
-  RECORD_MODE_SUBDOMAIN,
-  RECORD_NAMESERVERS,
-  RECORD_PROXY_CARRIER,
-} from "./config";
+import { CLOUDFLARE_API_TOKEN } from "./config";
 
-// Thin Cloudflare API client for the DNS records feature:
-//   * ensureRecordZoneDelegation() delegates `rc.<base>` from each supported
-//     base domain to our PowerDNS nameservers (same pattern as the existing
-//     records.domainak.qzz.io NS records),
-//   * ensureProxyCarrier() keeps the carrier record that proxied answers
-//     CNAME to, so resolvers land on Cloudflare's anycast IPs,
-//   * upsertProxiedRecord() / removeProxiedRecord() keep the actual proxied
-//     record in Cloudflare, which is what the edge uses to route the traffic.
+// Thin Cloudflare API client for per-domain DNS records: records are
+// published as ordinary DNS records in the base domain's Cloudflare
+// zone, under the registered subdomain (for example an MX for
+// `mail.app.example.com`). DNS-only records only — nothing here hides
+// an origin behind Cloudflare's proxy.
 //
-// Everything here is cached per process: zone list, delegation state and the
-// carrier are cheap to resolve once and never change during a deploy.
+// Everything is cached per process: the zone list never changes during
+// a deploy, so it is resolved once.
 
 const CF_API = "https://api.cloudflare.com/client/v4";
 
@@ -27,6 +19,10 @@ export class CfError extends Error {
     this.name = "CfError";
     this.status = status;
   }
+}
+
+export function cloudflareConfigured(): boolean {
+  return Boolean(CLOUDFLARE_API_TOKEN);
 }
 
 interface CfZone {
@@ -96,7 +92,7 @@ function listZones(): Promise<CfZone[]> {
 }
 
 // The CF zone that owns `fqdn`: longest matching suffix wins, so
-// rc.shortly.z44d.com resolves to the z44d.com zone.
+// `mail.app.example.com` resolves to the example.com zone.
 async function zoneFor(fqdn: string): Promise<CfZone> {
   const zones = await listZones();
   const name = fqdn.toLowerCase();
@@ -126,130 +122,123 @@ async function findRecords(
   return body.result;
 }
 
-const delegatedBases = new Set<string>();
-
-// Publishes the two NS records that delegate `rc.<base>` to our PowerDNS
-// nameservers, mirroring the records.domainak.qzz.io delegation. A no-op
-// once the records exist.
-export async function ensureRecordZoneDelegation(
-  base: string,
-): Promise<void> {
-  const key = base.toLowerCase();
-  if (delegatedBases.has(key)) {
-    return;
-  }
-
-  const owner = RECORD_MODE_SUBDOMAIN
-    ? `${RECORD_MODE_SUBDOMAIN}.${key}`
-    : key;
-  const zone = await zoneFor(owner);
-  const existing = await findRecords(zone.id, owner);
-  const present = new Set(
-    existing
-      .filter((record) => record.type === "NS")
-      .map((record) => record.content.toLowerCase().replace(/\.$/, "")),
-  );
-
-  for (const nameserver of RECORD_NAMESERVERS) {
-    const target = nameserver.toLowerCase().replace(/\.$/, "");
-    if (present.has(target)) {
-      continue;
-    }
-    await cfFetch(`/zones/${zone.id}/dns_records`, {
-      method: "POST",
-      body: JSON.stringify({
-        type: "NS",
-        name: owner,
-        content: target,
-        ttl: 300,
-      }),
-    });
-  }
-
-  delegatedBases.add(key);
+export interface CloudflareRecordInput {
+  type: string;
+  name: string;
+  content: string;
+  ttl: number;
+  comment?: string | null;
 }
 
-let carrierReady = false;
-
-// The carrier record every proxied answer CNAMEs to. It must live outside
-// every delegated zone (in the parent of the legacy records zone) so it
-// resolves through Cloudflare and returns the anycast IPs.
-export async function ensureProxyCarrier(): Promise<void> {
-  if (carrierReady) {
-    return;
-  }
-
-  const zone = await zoneFor(RECORD_PROXY_CARRIER);
-  const existing = await findRecords(zone.id, RECORD_PROXY_CARRIER);
-  const a = existing.find((record) => record.type === "A");
-
-  if (!a) {
-    await cfFetch(`/zones/${zone.id}/dns_records`, {
-      method: "POST",
-      body: JSON.stringify({
-        type: "A",
-        name: RECORD_PROXY_CARRIER,
-        content: "192.0.2.1",
-        proxied: true,
-        ttl: 1,
-      }),
-    });
-  } else if (!a.proxied) {
-    await cfFetch(`/zones/${zone.id}/dns_records/${a.id}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        type: "A",
-        name: RECORD_PROXY_CARRIER,
-        content: a.content,
-        proxied: true,
-        ttl: 1,
-      }),
-    });
-  }
-
-  carrierReady = true;
-}
-
-// Creates or updates the proxied record in Cloudflare for a record the
-// user marked as "Proxied". The CF record is what the edge routes on; the
-// PowerDNS answer only points resolvers at Cloudflare.
-export async function upsertProxiedRecord(
-  fqdn: string,
-  type: "A" | "AAAA" | "CNAME",
-  value: string,
-): Promise<void> {
-  const zone = await zoneFor(fqdn);
-  const existing = await findRecords(zone.id, fqdn);
-  const content = type === "CNAME" ? value.replace(/\.$/, "") : value;
-  const payload = JSON.stringify({
-    type,
-    name: fqdn,
-    content,
-    proxied: true,
-    ttl: 1,
+function recordPayload(input: CloudflareRecordInput): string {
+  return JSON.stringify({
+    type: input.type,
+    name: input.name,
+    content: input.content,
+    ttl: input.ttl,
+    proxied: false,
+    ...(input.comment ? { comment: input.comment } : {}),
   });
+}
 
-  const match = existing.find((record) => record.name === fqdn);
-  if (match) {
-    await cfFetch(`/zones/${zone.id}/dns_records/${match.id}`, {
+// Creates the record in Cloudflare, or updates/adopts the matching one
+// when it already exists (for example a record left behind by an older
+// row). Returns the Cloudflare record id.
+export async function upsertCloudflareRecord(
+  input: CloudflareRecordInput,
+  existingId?: string | null,
+): Promise<string> {
+  const zone = await zoneFor(input.name);
+  const payload = recordPayload(input);
+
+  if (existingId) {
+    try {
+      await cfFetch(`/zones/${zone.id}/dns_records/${existingId}`, {
+        method: "PUT",
+        body: payload,
+      });
+      return existingId;
+    } catch (error) {
+      if (!(error instanceof CfError) || error.status !== 404) {
+        throw error;
+      }
+      // The stored id is gone in Cloudflare; fall through and recreate.
+    }
+  }
+
+  const existing = await findRecords(zone.id, input.name);
+  const sameType = existing.filter(
+    (record) =>
+      record.type === input.type &&
+      record.name.toLowerCase() === input.name.toLowerCase(),
+  );
+  const identical = sameType.find(
+    (record) => record.content === input.content,
+  );
+  if (identical) {
+    await cfFetch(`/zones/${zone.id}/dns_records/${identical.id}`, {
       method: "PUT",
       body: payload,
     });
-    return;
+    return identical.id;
+  }
+  if (sameType[0]) {
+    await cfFetch(`/zones/${zone.id}/dns_records/${sameType[0].id}`, {
+      method: "PUT",
+      body: payload,
+    });
+    return sameType[0].id;
   }
 
-  await cfFetch(`/zones/${zone.id}/dns_records`, {
-    method: "POST",
-    body: payload,
-  });
+  const created = await cfFetch<{ result: CfDnsRecord }>(
+    `/zones/${zone.id}/dns_records`,
+    { method: "POST", body: payload },
+  );
+  return created.result.id;
 }
 
-// Removes the proxied record from Cloudflare (used when a record is
-// deleted, so the name stops routing through the edge).
-export async function removeProxiedRecord(fqdn: string): Promise<void> {
-  const zone = await zoneFor(fqdn);
-  const existing = await findRecords(zone.id, fqdn);
+// Removes a published record. A missing zone or a missing record id
+// means there is nothing left to remove, so those are swallowed; any
+// other Cloudflare failure is thrown so the caller can keep the row.
+export async function removeCloudflareRecord(
+  name: string,
+  type: string,
+  cloudflareId: string | null,
+  content?: string,
+): Promise<void> {
+  let zone: CfZone;
+  try {
+    zone = await zoneFor(name);
+  } catch (error) {
+    if (error instanceof CfError && error.status === 404) {
+      return;
+    }
+    throw error;
+  }
+
+  if (cloudflareId) {
+    try {
+      await cfFetch(`/zones/${zone.id}/dns_records/${cloudflareId}`, {
+        method: "DELETE",
+      });
+      return;
+    } catch (error) {
+      if (!(error instanceof CfError) || error.status !== 404) {
+        throw error;
+      }
+      // Fall through to the name-based cleanup below.
+    }
+  }
+
+  const existing = await findRecords(zone.id, name);
   for (const record of existing) {
+    if (
+      record.type !== type ||
+      record.name.toLowerCase() !== name.toLowerCase() ||
+      (content !== undefined && record.content !== content)
+    ) {
+      continue;
+    }
     await cfFetch(`/zones/${zone.id}/dns_records/${record.id}`, {
       method: "DELETE",
     });

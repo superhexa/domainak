@@ -9,6 +9,7 @@ Domainak is a GitHub-authenticated subdomain router with a React dashboard, a Ho
 - Track traffic totals, yearly, monthly, weekly, and daily visitors in Redis.
 - Manage the platform from an admin panel with paginated views for domains, users, banned users, banned domains, and blocked IPs.
 - Ban users, domains, and IPs without being limited to the latest 100 records.
+- Manage DNS records for each registered domain from its settings: A, AAAA, CNAME, TXT, MX, NS, SRV, CAA, PTR, DS, HTTPS, SVCB, CERT, SSHFP, TLSA and NAPTR, published in the base domain's Cloudflare zone.
 
 ## Stack
 
@@ -241,6 +242,34 @@ docker compose logs cloudflared --tail=100
 ### 7. Open the panel
 
 Visit your `WEBSITE_URL`, sign in with GitHub, and verify your GitHub user ID is in `ADMIN_IDS` if you need admin access.
+
+## DNS records
+
+Open any domain in the dashboard and use **Records**. A record's name is
+relative to the domain: `@` is the domain itself (`app.example.com`),
+`www` is `www.app.example.com`, and `_acme-challenge` is the ACME
+challenge name under it. Records are published as ordinary DNS records
+in the base domain's Cloudflare zone, so they resolve like any other
+record in that zone.
+
+- Supported types: A, AAAA, CNAME, TXT, MX, NS, SRV, CAA, PTR, DS,
+  HTTPS, SVCB, CERT, SSHFP, TLSA, NAPTR. CNAME exclusivity is enforced
+  (a CNAME cannot share its name with other records).
+- Each record shows its publish status: **Published**, **Not published**
+  or **Publish failed**, with the error and a Retry button. Records are
+  always saved in Postgres first, so a missing token or a Cloudflare
+  outage never loses a record.
+- Publishing needs `CLOUDFLARE_API_TOKEN` (Zone:DNS:Edit) on the
+  backend. Without it, records stay "Not published" until the token is
+  configured. An `@` A/AAAA/CNAME record replaces what the domain
+  resolves to and overrides its proxy route at the apex.
+- Deleting a domain (or banning it) removes its published records from
+  Cloudflare as well.
+
+> The previous standalone records system (the separate Records tab and
+> the `rc.<domain>` PowerDNS zones) was removed. Existing `*.rc.*`
+> records stop resolving after this change; recreate them under the
+> relevant domain's Records section.
 
 ## Ports
 
