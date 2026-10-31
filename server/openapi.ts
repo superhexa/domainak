@@ -572,7 +572,7 @@ export const openApiDoc: OpenAPIV3.Document = {
         tags: ["Domain Records"],
         summary: "Create a DNS record for a domain",
         description:
-          "Validates the record, saves it, and publishes it in the domain's PowerDNS zone. When PowerDNS is not configured or errors, the record is still saved with syncStatus pending/failed and can be retried. Records only resolve publicly once the domain is delegated to the server's nameservers.",
+          "Validates the record, saves it, and publishes it in the domain's PowerDNS zone. When PowerDNS is not configured or errors, the record is still saved with syncStatus pending/failed and can be retried. Records only resolve publicly once the domain is delegated to the server's nameservers. A, AAAA and CNAME records also get a proxy route, so a request for the name that reaches this server serves the record's target.",
         security: [{ BearerAuth: [] }],
         parameters: [
           {

@@ -112,9 +112,7 @@ export function toPowerDnsContent(type: string, value: string): string {
   }
   if (type === "SRV") {
     const parts = value.split(/\s+/);
-    return (
-      `${parts[0]} ${parts[1]} ${parts[2]} ` + withDot(parts[3] ?? "")
-    );
+    return `${parts[0]} ${parts[1]} ${parts[2]} ${withDot(parts[3] ?? "")}`;
   }
   if (type === "HTTPS" || type === "SVCB") {
     const parts = value.split(/\s+/);

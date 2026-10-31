@@ -12,13 +12,13 @@ Practical guide for agentic coding assistants working in `domainak`.
 ## Key Paths
 - `server/` - API entrypoint, routes, middleware, config
 - `server/db/` - Drizzle schema, Postgres bootstrap, Redis client
-- `server/routes/` - feature routers: `auth`, `admin`, `domains`, `stats`; per-domain DNS record handlers live in `server/routes/domain-records.ts`, validation in `server/dns-validation.ts`
+- `server/routes/` - feature routers: `auth`, `admin`, `domains`, `stats`; per-domain DNS record handlers live in `server/routes/domain-records.ts`, validation in `server/dns-validation.ts`, proxy routes for A/AAAA/CNAME records in `server/record-routes.ts`
 - `frontend/src/pages/` - page-level screens
 - `frontend/src/components/` - reusable UI
 - `frontend/src/lib/` - API client, helpers, shared types
 - `.github/workflows/` - deployment workflows
 - `docker-compose.yaml` - container stack
-- `nginx.conf` - OpenResty routing config
+- `nginx.conf` - OpenResty routing config: registered routes first, then DNS record routes (`record:<host>` in Redis), then the unregistered-host page
 - `server/powerdns.ts` - PowerDNS API client: per-domain zones, rrset
   rebuilds, wire encoding, delegation checks (needs `PDNS_API_URL` /
   `PDNS_API_KEY`, nameservers from `DNS_NAMESERVERS`)
@@ -150,7 +150,7 @@ Frontend `eslint.config.js` additionally enforces:
 - Middleware returns JSON errors instead of throwing framework exceptions.## Config and Deployment
 
 - Backend env handling is centralized in `server/config.ts`.
-- DNS records belong to a registered domain (`domain_dns_record`, FK cascade on domain delete) and are published by the PowerDNS client into that domain's own zone; without a reachable PowerDNS they stay saved with syncStatus `pending`/`failed`. Deleting or banning a domain deletes its PowerDNS zone. At boot the backend re-creates zones and republishes stored names (warmup in `server/index.ts`).
+- DNS records belong to a registered domain (`domain_dns_record`, FK cascade on domain delete) and are published by the PowerDNS client into that domain's own zone; without a reachable PowerDNS they stay saved with syncStatus `pending`/`failed`. A, AAAA and CNAME records also get a proxy route in Redis (`record:<fqdn>`, see `server/record-routes.ts`), refreshed on every record change and rebuilt at boot. Deleting or banning a domain deletes its PowerDNS zone and its proxy routes. At boot the backend re-creates zones and republishes stored names (warmup in `server/index.ts`).
 - Frontend API base URL comes from `import.meta.env.VITE_API_URL`, which deployment currently feeds from `BACKEND_URL` during the frontend image build.
 - `docker-compose.yaml` builds local backend/frontend images and tags them with the GHCR image names.
 - `setup.sh` writes deployment env vars into `~/.domainak/.env`.

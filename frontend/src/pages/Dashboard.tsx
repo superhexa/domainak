@@ -28,6 +28,8 @@ import {
   Select,
   Snackbar,
   Stack,
+  Tab,
+  Tabs,
   TextField,
   Typography,
   useTheme,
@@ -46,6 +48,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DnsRecordsPanel } from "../components/DnsRecordsPanel";
 import { DomainRecordsPanel } from "../components/DomainRecordsPanel";
 import { DomainRulesPanel } from "../components/DomainRulesPanel";
 import { LoadingScreen } from "../components/LoadingScreen";
@@ -93,6 +96,9 @@ export default function Dashboard() {
   const [availableDomains, setAvailableDomains] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSuspended, setIsSuspended] = useState(false);
+  const [activeTab, setActiveTab] = useState<"records" | "domains">(
+    "records",
+  );
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [formData, setFormData] = useState({
@@ -169,6 +175,7 @@ export default function Dashboard() {
               subdomain: claimedSubdomain,
             }));
             setShowAddForm(true);
+            setActiveTab("domains");
           }
         }
       } catch (error: unknown) {
@@ -445,19 +452,39 @@ export default function Dashboard() {
             sx={{ mb: 1 }}
           />
           <Typography variant="h1" component="h1" sx={{ mb: 0.5 }}>
-            Domains
+            {activeTab === "records" ? "DNS Records" : "Domains"}
           </Typography>
           <Typography
             variant="body1"
             color="textSecondary"
             sx={{ mt: 0.5, maxWidth: 640 }}
           >
-            Register a destination, review traffic only when you need it,
-            and manage each domain&apos;s DNS records from its own
-            settings.
+            {activeTab === "records"
+              ? "Every DNS record across your domains, published to your own PowerDNS and routed through the proxy."
+              : "Register a destination, review traffic only when you need it, and manage each domain's DNS records from its own settings."}
           </Typography>
         </Box>
       </Box>
+
+      <Tabs
+        value={activeTab === "records" ? 0 : 1}
+        onChange={(_, value) =>
+          setActiveTab(value === 0 ? "records" : "domains")
+        }
+        aria-label="Workspace sections"
+        sx={{ mb: 2 }}
+      >
+        <Tab
+          label="Records"
+          icon={<DnsRounded />}
+          iconPosition="start"
+        />
+        <Tab
+          label="Domains"
+          icon={<LanguageRounded />}
+          iconPosition="start"
+        />
+      </Tabs>
 
       {pageError ? (
         <Alert
@@ -485,7 +512,9 @@ export default function Dashboard() {
         </Alert>
       ) : null}
 
-      {!pageError ? (
+      {activeTab === "records" ? (
+        <DnsRecordsPanel onFeedback={setTransientFeedback} />
+      ) : !pageError ? (
         <Box>
           <>
               <Button

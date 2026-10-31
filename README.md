@@ -264,6 +264,18 @@ DNS provider is involved in publishing.
   always saved in Postgres first, so a PowerDNS outage never loses a
   record. At startup the backend re-creates every zone and republishes
   every stored name, so PowerDNS and Postgres cannot drift apart.
+- A, AAAA and CNAME records also route through the proxy: when a
+  request for a record's name reaches this server (for example
+  through the base domains' wildcard, which points at the tunnel),
+  the proxy serves the record's target instead of the "subdomain
+  isn't claimed yet" page. CNAME targets are proxied over HTTPS with
+  the record's hostname as the Host header, exactly as a real CNAME
+  resolution behaves, and TLS terminates at the tunnel edge as for
+  registered routes, so record hostnames served through the tunnel
+  keep working over HTTPS. A registered domain route always takes
+  precedence over a record route for the same name. Other record
+  types are DNS-only: they resolve through PowerDNS once delegated,
+  but create no proxy route.
 - For records to resolve on the public internet, the domain must be
   delegated to this server's nameservers (by default `ns1`/`ns2` under
   your first base domain, overridable with `DNS_NAMESERVERS`). Add NS
@@ -275,13 +287,16 @@ DNS provider is involved in publishing.
   Delegating a domain also moves its apex DNS to PowerDNS: if the
   domain's website should keep routing through the tunnel, add an
   apex record for it in the panel (for example a CNAME to your tunnel
-  hostname) — an `@` A/AAAA/CNAME record replaces what the domain
-  resolves to and overrides its proxy route at the apex.
+  hostname) — the apex record is what the domain resolves to in DNS
+  once delegated. HTTP traffic through the proxy still follows the
+  domain's registered route, which takes precedence over record
+  routes for the same name.
 - Deleting a domain (or banning it) removes its whole PowerDNS zone
   as well.
 
-> The previous standalone records system (the separate Records tab and
-> the `rc.<domain>` PowerDNS zones) was removed. Existing `*.rc.*`
+> The previous standalone records system (the `rc.<domain>` PowerDNS
+> zones and the standalone records API) was removed. The Records tab
+> is now an inventory of the per-domain records. Existing `*.rc.*`
 > records stop resolving after this change; recreate them under the
 > relevant domain's Records section. Records published by the earlier
 > Cloudflare-based version are not removed automatically — delete
