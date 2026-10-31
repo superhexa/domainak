@@ -22,6 +22,7 @@ import {
   PdnsError,
   powerDns,
 } from "../powerdns";
+import { refreshRecordRoute, removeRecordRoute } from "../record-routes";
 
 // DNS records for one registered domain, managed from that domain's
 // settings. Records live under the domain itself (@ is the domain,
@@ -318,6 +319,10 @@ export async function createDomainRecord(c: Context) {
       status: "pending",
       error: notConfiguredError(),
     });
+    // The proxy route does not depend on PowerDNS: a name that
+    // reaches the proxy through the wildcard still serves its
+    // target.
+    await refreshRecordRoute(id, parsed.fqdn);
     return c.json({ record: toPublicRecord(saved ?? record) }, 201);
   }
 
@@ -329,12 +334,14 @@ export async function createDomainRecord(c: Context) {
     const saved = await markPublishState(record.id, {
       status: "synced",
     });
+    await refreshRecordRoute(id, parsed.fqdn);
     return c.json({ record: toPublicRecord(saved ?? record) }, 201);
   } catch (error) {
     const saved = await markPublishState(record.id, {
       status: "failed",
       error: syncErrorMessage(error),
     });
+    await refreshRecordRoute(id, parsed.fqdn);
     return c.json({ record: toPublicRecord(saved ?? record) }, 201);
   }
 }
@@ -469,6 +476,10 @@ export async function updateDomainRecord(c: Context) {
       if (!saved) {
         return c.json({ error: "Failed to update record" }, 500);
       }
+      await refreshRecordRoute(id, parsed.fqdn);
+      if (parsed.fqdn !== existing.name) {
+        await refreshRecordRoute(id, existing.name);
+      }
       return c.json({ record: toPublicRecord(saved) });
     } catch (error) {
       return c.json({ error: syncErrorMessage(error) }, 500);
@@ -493,6 +504,7 @@ export async function updateDomainRecord(c: Context) {
         .returning();
       const saved = updated[0];
       if (saved) {
+        await refreshRecordRoute(id, parsed.fqdn);
         return c.json({ record: toPublicRecord(saved) });
       }
     } catch (error) {
@@ -560,6 +572,7 @@ export async function deleteDomainRecord(c: Context) {
   await db
     .delete(domainDnsRecordsTable)
     .where(eq(domainDnsRecordsTable.id, recordId));
+  await refreshRecordRoute(id, record.name);
   return c.json({ success: true });
 }
 
@@ -593,6 +606,7 @@ export async function retryDomainRecord(c: Context) {
       status: "pending",
       error: notConfiguredError(),
     });
+    await refreshRecordRoute(id, record.name);
     return c.json({ record: toPublicRecord(saved ?? record) });
   }
 
@@ -614,6 +628,7 @@ export async function retryDomainRecord(c: Context) {
     const saved = await markPublishState(record.id, {
       status: "synced",
     });
+    await refreshRecordRoute(id, record.name);
     return c.json({ record: toPublicRecord(saved ?? record) });
   } catch (error) {
     const saved = await markPublishState(record.id, {
@@ -636,6 +651,11 @@ export async function removeDomainDnsRecords(
     .from(domainTable)
     .where(eq(domainTable.id, domainId));
   const domain = found[0];
+  const names = await db
+    .select({ name: domainDnsRecordsTable.name })
+    .from(domainDnsRecordsTable)
+    .where(eq(domainDnsRecordsTable.domainId, domainId))
+    .groupBy(domainDnsRecordsTable.name);
   if (domain && powerDns.configured()) {
     try {
       await powerDns.deleteZone(domain.subdomain);
@@ -649,4 +669,60 @@ export async function removeDomainDnsRecords(
   await db
     .delete(domainDnsRecordsTable)
     .where(eq(domainDnsRecordsTable.domainId, domainId));
+  // The zone is gone, so the names must stop routing through the
+  // proxy too, or a deleted record keeps serving its old target.
+  for (const row of names) {
+    await removeRecordRoute(row.name);
+  }
+}
+
+// Deletes one record on an admin's behalf: rebuilds the name in
+// PowerDNS from the remaining rows (best-effort, so a DNS failure
+// can never block moderation), deletes the row, and refreshes the
+// proxy route. Returns the deleted record, or null when it does
+// not exist.
+export async function deleteDomainRecordRow(
+  recordId: number,
+): Promise<RecordRow | null> {
+  const found = await db
+    .select()
+    .from(domainDnsRecordsTable)
+    .where(eq(domainDnsRecordsTable.id, recordId));
+  const record = found[0];
+  if (!record) {
+    return null;
+  }
+  const domains = await db
+    .select({ subdomain: domainTable.subdomain })
+    .from(domainTable)
+    .where(eq(domainTable.id, record.domainId));
+  const domain = domains[0];
+  if (domain && powerDns.configured()) {
+    try {
+      const siblings = await db
+        .select()
+        .from(domainDnsRecordsTable)
+        .where(
+          and(
+            eq(domainDnsRecordsTable.domainId, record.domainId),
+            eq(domainDnsRecordsTable.name, record.name),
+          ),
+        );
+      await publishNameRows(
+        domain.subdomain,
+        record.name,
+        siblings.filter((row) => row.id !== recordId).map(toRowInput),
+      );
+    } catch (error) {
+      console.error(
+        `Failed to unpublish DNS record ${record.name}:`,
+        error,
+      );
+    }
+  }
+  await db
+    .delete(domainDnsRecordsTable)
+    .where(eq(domainDnsRecordsTable.id, recordId));
+  await refreshRecordRoute(record.domainId, record.name);
+  return record;
 }

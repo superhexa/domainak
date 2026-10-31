@@ -2,6 +2,7 @@ import {
   BlockRounded,
   CheckCircleRounded,
   DeleteOutlineRounded,
+  DnsRounded,
   InboxRounded,
   PeopleRounded,
   PublicOffRounded,
@@ -41,7 +42,9 @@ import { AppShell } from "../components/AppShell";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { LoadingScreen } from "../components/LoadingScreen";
 import { ApiError, api } from "../lib/api";
+import { TYPE_COLOR } from "../lib/dns-records";
 import type {
+  AdminDnsRecordRow,
   AdminUserRow,
   BannedDomain,
   BannedIp,
@@ -58,9 +61,15 @@ type AdminView =
   | "users"
   | "banned-users"
   | "banned-domains"
-  | "banned-ips";
+  | "banned-ips"
+  | "dns-records";
 
-type AdminItem = Domain | AdminUserRow | BannedDomain | BannedIp;
+type AdminItem =
+  | Domain
+  | AdminUserRow
+  | BannedDomain
+  | BannedIp
+  | AdminDnsRecordRow;
 
 interface Feedback {
   message: string;
@@ -140,6 +149,16 @@ const viewMeta: Record<
     endpoint: "/admin/ips",
     icon: <WifiOffRounded fontSize="small" />,
   },
+  "dns-records": {
+    title: "DNS Records",
+    eyebrow: "Records inventory",
+    description:
+      "Review every DNS record across all domains, see who owns it, and remove records that should no longer resolve or route.",
+    emptyTitle: "No DNS records yet",
+    emptyCopy: "Records created from the dashboard will appear here.",
+    endpoint: "/admin/dns-records",
+    icon: <DnsRounded fontSize="small" />,
+  },
 };
 
 const initialPagination = (): PaginationMeta => ({
@@ -162,6 +181,7 @@ export default function Admin() {
     "banned-users": 1,
     "banned-domains": 1,
     "banned-ips": 1,
+    "dns-records": 1,
   });
   const [viewData, setViewData] = useState<PaginatedResponse<AdminItem>>({
     items: [],
@@ -492,6 +512,25 @@ export default function Admin() {
     [reloadCurrentView, runAction, setTransientFeedback],
   );
 
+  const handleDeleteDnsRecord = useCallback(
+    (id: number) => {
+      setConfirmRequest({
+        title: "Remove DNS record?",
+        message:
+          "Remove this record? It will stop resolving and stop routing through the proxy immediately.",
+        confirmLabel: "Remove",
+        action: async () => {
+          await runAction(`dns-record-delete-${id}`, async () => {
+            await api.delete(`/admin/dns-records/${id}`);
+            setTransientFeedback("DNS record removed.");
+            await reloadCurrentView();
+          });
+        },
+      });
+    },
+    [reloadCurrentView, runAction, setTransientFeedback],
+  );
+
   if (isInitializing) {
     return <LoadingScreen label="Loading moderation tools..." />;
   }
@@ -680,6 +719,12 @@ export default function Admin() {
             domains={rows as BannedDomain[]}
             pendingActionKey={pendingActionKey}
             onUnbanDomain={handleUnbanDomain}
+          />
+        ) : activeView === "dns-records" ? (
+          <DnsRecordsTable
+            records={rows as AdminDnsRecordRow[]}
+            pendingActionKey={pendingActionKey}
+            onDeleteDnsRecord={handleDeleteDnsRecord}
           />
         ) : (
           <BannedIpsTable
@@ -1350,6 +1395,173 @@ function BannedIpsTable({
               </TableCell>
             </TableRow>
           ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+}
+
+function DnsRecordsTable({
+  records,
+  pendingActionKey,
+  onDeleteDnsRecord,
+}: {
+  records: AdminDnsRecordRow[];
+  pendingActionKey: string | null;
+  onDeleteDnsRecord: (id: number) => void;
+}) {
+  return (
+    <TableContainer sx={{ overflowX: "auto" }}>
+      <Table sx={{ minWidth: 720 }}>
+        <caption
+          style={{
+            position: "absolute",
+            width: 1,
+            height: 1,
+            overflow: "hidden",
+            clip: "rect(0 0 0 0)",
+          }}
+        >
+          DNS records and moderation actions.
+        </caption>
+        <TableHead>
+          <TableRow>
+            <TableCell>Record</TableCell>
+            <TableCell>Type</TableCell>
+            <TableCell>Value</TableCell>
+            <TableCell>Domain</TableCell>
+            <TableCell>Status</TableCell>
+            <TableCell>User</TableCell>
+            <TableCell>Created</TableCell>
+            <TableCell>Actions</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {records.map((record) => {
+            const isUserBanned = record.user?.isBanned ?? false;
+
+            return (
+              <TableRow key={record.id}>
+                <TableCell>
+                  <Typography
+                    dir="auto"
+                    sx={{
+                      fontFamily: FONT_MONO,
+                      fontWeight: 600,
+                      fontSize: "0.9rem",
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {record.name}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Chip
+                    size="small"
+                    variant="filled"
+                    label={record.type}
+                    color={TYPE_COLOR[record.type]}
+                    sx={{ fontFamily: FONT_MONO }}
+                  />
+                </TableCell>
+                <TableCell sx={{ minWidth: 140 }}>
+                  <Typography
+                    dir="auto"
+                    sx={{
+                      fontFamily: FONT_MONO,
+                      fontSize: "0.85rem",
+                      color: "text.secondary",
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {record.value}
+                  </Typography>
+                </TableCell>
+                <TableCell
+                  sx={{
+                    fontFamily: FONT_MONO,
+                    fontSize: "0.85rem",
+                    color: "text.secondary",
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {record.domain ?? "-"}
+                </TableCell>
+                <TableCell>
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label={
+                      record.syncStatus === "synced"
+                        ? "Published"
+                        : record.syncStatus === "failed"
+                          ? "Publish failed"
+                          : "Not published"
+                    }
+                    color={
+                      record.syncStatus === "synced"
+                        ? "success"
+                        : record.syncStatus === "failed"
+                          ? "error"
+                          : "warning"
+                    }
+                    sx={{ fontFamily: FONT_MONO }}
+                  />
+                </TableCell>
+                <TableCell sx={{ minWidth: 160 }}>
+                  <Typography
+                    dir="auto"
+                    sx={{ fontWeight: 600, overflowWrap: "anywhere" }}
+                  >
+                    {record.user?.name || "Unknown user"}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="textSecondary"
+                    dir="auto"
+                    sx={{ display: "block", overflowWrap: "anywhere" }}
+                  >
+                    {record.user?.email || "No email"}
+                  </Typography>
+                  {isUserBanned ? (
+                    <Typography
+                      variant="caption"
+                      color="error"
+                      sx={{ display: "block", overflowWrap: "anywhere" }}
+                    >
+                      User banned
+                    </Typography>
+                  ) : null}
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2" color="textSecondary">
+                    {record.createdAt ? formatDate(record.createdAt) : "-"}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    useFlexGap
+                    sx={{ flexWrap: "wrap" }}
+                  >
+                    <ActionButton
+                      pending={
+                        pendingActionKey === `dns-record-delete-${record.id}`
+                      }
+                      color="error"
+                      startIcon={
+                        <DeleteOutlineRounded fontSize="small" />
+                      }
+                      onClick={() => onDeleteDnsRecord(record.id)}
+                    >
+                      Remove
+                    </ActionButton>
+                  </Stack>
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </TableContainer>

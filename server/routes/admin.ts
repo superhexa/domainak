@@ -5,11 +5,15 @@ import { deleteDomainRoute, redis } from "../db/redis";
 import {
   bannedDomainsTable,
   bannedIpsTable,
+  domainDnsRecordsTable,
   domainTable,
   userTable,
 } from "../db/schema";
 import { adminMiddleware, jwtMiddleware } from "../middleware/auth";
-import { removeDomainDnsRecords } from "./domain-records";
+import {
+  deleteDomainRecordRow,
+  removeDomainDnsRecords,
+} from "./domain-records";
 
 export const adminRouter = new Hono<{ Variables: { user: any } }>();
 
@@ -210,6 +214,58 @@ adminRouter.get("/ips", async (c) => {
     items: bannedIps,
     pagination: buildPagination(Number(total), page, pageSize),
   });
+});
+
+// Get paginated DNS records across all domains (admin inventory)
+adminRouter.get("/dns-records", async (c) => {
+  const { page, pageSize, offset } = getPaginationParams(c);
+  const [{ total } = { total: 0 }] = await db
+    .select({ total: count() })
+    .from(domainDnsRecordsTable);
+  const records = await db
+    .select({
+      id: domainDnsRecordsTable.id,
+      name: domainDnsRecordsTable.name,
+      type: domainDnsRecordsTable.type,
+      value: domainDnsRecordsTable.value,
+      ttl: domainDnsRecordsTable.ttl,
+      syncStatus: domainDnsRecordsTable.syncStatus,
+      createdAt: domainDnsRecordsTable.createdAt,
+      domain: domainTable.subdomain,
+      user: {
+        id: userTable.id,
+        name: userTable.name,
+        email: userTable.email,
+        githubId: userTable.githubId,
+        isBanned: userTable.isBanned,
+      },
+    })
+    .from(domainDnsRecordsTable)
+    .leftJoin(
+      domainTable,
+      eq(domainDnsRecordsTable.domainId, domainTable.id),
+    )
+    .leftJoin(userTable, eq(domainDnsRecordsTable.userId, userTable.id))
+    .orderBy(desc(domainDnsRecordsTable.createdAt))
+    .limit(pageSize)
+    .offset(offset);
+
+  return c.json({
+    items: records,
+    pagination: buildPagination(Number(total), page, pageSize),
+  });
+});
+
+// Delete any DNS record (admin bypasses ownership). The name is
+// unpublished from PowerDNS and its proxy route refreshed first,
+// best-effort, so the record stops resolving and serving.
+adminRouter.delete("/dns-records/:id", async (c) => {
+  const id = Number.parseInt(c.req.param("id"), 10);
+  const deleted = await deleteDomainRecordRow(id);
+  if (!deleted) {
+    return c.json({ error: "DNS record not found" }, 404);
+  }
+  return c.json({ success: true });
 });
 
 // Delete a domain

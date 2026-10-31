@@ -144,6 +144,26 @@ export interface AdminUserRow {
   domainCount: number;
 }
 
+// One row of the admin DNS records inventory (GET /admin/dns-records):
+// the record itself, the domain it belongs to, and its owner.
+export interface AdminDnsRecordRow {
+  id: number;
+  name: string;
+  type: DnsRecordType;
+  value: string;
+  ttl: number;
+  syncStatus: DnsSyncStatus;
+  domain: string | null;
+  createdAt?: string;
+  user: {
+    id: number | null;
+    name: string | null;
+    email: string | null;
+    githubId: number | null;
+    isBanned: boolean | null;
+  } | null;
+}
+
 export interface BannedDomain {
   id: number;
   domain: string;
